@@ -1,0 +1,182 @@
+<?xml version="1.0"?>
+<robot name="robot_dog" xmlns:xacro="http://www.ros.org/wiki/xacro">
+
+  <!-- ========== 材料属性 ========== -->
+  <material name="body_color">
+    <color rgba="0.3 0.3 0.4 1.0"/>
+  </material>
+  <material name="leg_color">
+    <color rgba="0.5 0.5 0.6 1.0"/>
+  </material>
+  <material name="wheel_color">
+    <color rgba="0.2 0.2 0.2 1.0"/>
+  </material>
+  <material name="sensor_color">
+    <color rgba="0.1 0.8 0.2 1.0"/>
+  </material>
+
+  <!-- ========== 躯体参数 (来自 MiniCheetah.h) ========== -->
+  <xacro:property name="body_length" value="0.729"/>
+  <xacro:property name="body_width" value="0.195"/>
+  <xacro:property name="body_height" value="0.17"/>
+  <xacro:property name="body_mass" value="27.0"/>
+
+  <!-- 关节连杆参数 -->
+  <xacro:property name="abad_link_length" value="0.136"/>
+  <xacro:property name="hip_link_length" value="0.30"/>
+  <xacro:property name="knee_link_length" value="0.452"/>
+  <xacro:property name="wheel_radius" value="0.08"/>
+
+  <!-- 每条腿的髋部位置 (body frame 原点在躯干几何中心) -->
+  <!-- abadLocation = (bodyLength-0.08)/2, bodyWidth/2, 0 -->
+  <!-- FR: (+x, -y) / FL: (+x, +y) / HR: (-x, -y) / HL: (-x, +y) -->
+  <xacro:property name="hip_x" value="${(body_length - 0.08) / 2}"/>
+  <xacro:property name="hip_y" value="${body_width / 2}"/>
+
+  <!-- ========== 基础连杆 ========== -->
+  <link name="base_link">
+    <visual>
+      <geometry>
+        <box size="${body_length} ${body_width} ${body_height}"/>
+      </geometry>
+      <material name="body_color"/>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="${body_length} ${body_width} ${body_height}"/>
+      </geometry>
+    </collision>
+    <inertial>
+      <mass value="${body_mass}"/>
+      <origin xyz="0.00374 0.00011 -0.00480"/>
+      <inertia ixx="0.3172" ixy="0.2057" ixz="-0.0412"
+               iyy="1.2557" iyz="-0.0012" izz="1.4430"/>
+    </inertial>
+  </link>
+
+  <!-- IMU 传感器（YESENSE，位于躯干内） -->
+  <link name="imu_link">
+    <visual>
+      <geometry><box size="0.04 0.04 0.02"/></geometry>
+      <material name="sensor_color"/>
+    </visual>
+  </link>
+  <joint name="imu_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="imu_link"/>
+    <origin xyz="0 0 0.02"/>
+  </joint>
+
+  <!-- LiDAR 传感器（DJI 360S，位于顶部） -->
+  <link name="laser_link">
+    <visual>
+      <geometry><cylinder radius="0.04" length="0.06"/></geometry>
+      <material name="sensor_color"/>
+    </visual>
+  </link>
+  <joint name="laser_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="laser_link"/>
+    <origin xyz="0 0 0.25" rpy="0 0 0"/>
+  </joint>
+
+  <!-- ========== 四条腿 ========== -->
+  <!-- 
+    MiniCheetah 腿结构: abad(侧摆) → hip(俯仰) → knee(膝) → wheel(轮)
+    abadLocation = Vec3(bodyLength-0.08, bodyWidth, 0) * 0.5
+    hipLocation = Vec3(0.05, abadLinkLength, 0)
+    kneeLocation = Vec3(0, 0, -hipLinkLength)
+    
+    腿索引: FR=0, FL=1, HR=2, HL=3
+  -->
+
+  <!-- 腿: 前缀, x_sign(+1=前, -1=后), y_sign(+1=左, -1=右) -->
+  <xacro:macro name="leg" params="prefix leg_idx x_sign y_sign">
+    <!-- abad 侧摆关节 -->
+    <joint name="leg_${prefix}_abad_joint" type="revolute">
+      <parent link="base_link"/>
+      <child link="leg_${prefix}_abad_link"/>
+      <origin xyz="${x_sign * hip_x} ${y_sign * hip_y} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit effort="240" velocity="15.0" lower="-0.8" upper="0.8"/>
+    </joint>
+    <link name="leg_${prefix}_abad_link">
+      <visual>
+        <geometry><cylinder radius="0.03" length="${abad_link_length}"/></geometry>
+        <material name="leg_color"/>
+      </visual>
+      <inertial>
+        <mass value="2.55"/>
+        <origin xyz="0 ${0.021} 0"/>
+        <inertia ixx="0.0007" ixy="-0.00004" ixz="0.000005"
+                 iyy="0.0012" iyz="0.000024" izz="0.00096"/>
+      </inertial>
+    </link>
+
+    <!-- hip 俯仰关节 -->
+    <joint name="leg_${prefix}_hip_joint" type="revolute">
+      <parent link="leg_${prefix}_abad_link"/>
+      <child link="leg_${prefix}_hip_link"/>
+      <origin xyz="0.05 ${abad_link_length} 0" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit effort="240" velocity="15.0" lower="-1.5" upper="1.5"/>
+    </joint>
+    <link name="leg_${prefix}_hip_link">
+      <visual>
+        <geometry><cylinder radius="0.025" length="${hip_link_length}"/></geometry>
+        <material name="leg_color"/>
+      </visual>
+      <inertial>
+        <mass value="4.12"/>
+        <origin xyz="0 0.293 ${-0.033}"/>
+        <inertia ixx="0.194" ixy="0.0046" ixz="-0.0021"
+                 iyy="0.028" iyz="0.0372" izz="0.170"/>
+      </inertial>
+    </link>
+
+    <!-- knee 膝关节 -->
+    <joint name="leg_${prefix}_knee_joint" type="revolute">
+      <parent link="leg_${prefix}_hip_link"/>
+      <child link="leg_${prefix}_knee_link"/>
+      <origin xyz="0 0 ${-hip_link_length}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+      <limit effort="240" velocity="15.0" lower="-2.5" upper="2.5"/>
+    </joint>
+    <link name="leg_${prefix}_knee_link">
+      <visual>
+        <geometry><cylinder radius="0.02" length="${knee_link_length}"/></geometry>
+        <material name="leg_color"/>
+      </visual>
+      <inertial>
+        <mass value="3.31"/>
+        <origin xyz="0 0.019 ${-0.257}"/>
+        <inertia ixx="0.037" ixy="0.0002" ixz="-0.0005"
+                 iyy="0.041" iyz="0.0027" izz="0.008"/>
+      </inertial>
+    </link>
+
+    <!-- wheel 轮关节 (continuous, 轮子连续旋转) -->
+    <joint name="leg_${prefix}_wheel_joint" type="continuous">
+      <parent link="leg_${prefix}_knee_link"/>
+      <child link="leg_${prefix}_wheel_link"/>
+      <origin xyz="0 0 ${-knee_link_length}" rpy="0 0 0"/>
+      <axis xyz="0 1 0"/>
+    </joint>
+    <link name="leg_${prefix}_wheel_link">
+      <visual>
+        <geometry><cylinder radius="${wheel_radius}" length="0.03"/></geometry>
+        <material name="wheel_color"/>
+      </visual>
+      <inertial>
+        <mass value="0.15"/>
+        <inertia ixx="0.0001" iyy="0.0001" izz="0.0002"/>
+      </inertial>
+    </link>
+  </xacro:macro>
+
+  <xacro:leg prefix="FR" leg_idx="0" x_sign="1" y_sign="-1"/>
+  <xacro:leg prefix="FL" leg_idx="1" x_sign="1" y_sign="1"/>
+  <xacro:leg prefix="HR" leg_idx="2" x_sign="-1" y_sign="-1"/>
+  <xacro:leg prefix="HL" leg_idx="3" x_sign="-1" y_sign="1"/>
+
+</robot>

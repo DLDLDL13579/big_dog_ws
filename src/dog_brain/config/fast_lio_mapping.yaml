@@ -1,0 +1,32 @@
+# FAST-LIO2 mapping parameters (placeholder)
+# 实际参数由 FAST-LIO 包自身配置，这里仅做占位
+# 待 FAST-LIO2 部署后根据实际 config 更新
+
+fastlio_mapping:
+  ros__parameters:
+    # LiDAR
+    lidar_type: "livox"          # Livox Mid-360
+    scan_line: 4
+    blind: 0.5
+    # IMU
+    imu_topic: "/livox/imu"
+    imu_freq: 200.0
+    # Point cloud filter
+    point_filter_num: 1          # 1 = no downsampling at 200k pts
+    filter_size_corner: 0.1
+    filter_size_surf: 0.2
+    filter_size_map: 0.2
+    # Cube size
+    cube_side_length: 1000.0
+    # Extrinsic: LiDAR → IMU (内部集成, 旋转变换 = 单位)
+    extrinsic_T: [0.0, 0.0, 0.0]
+    extrinsic_R: [1.0, 0.0, 0.0,
+                  0.0, 1.0, 0.0,
+                  0.0, 0.0, 1.0]
+    # IMU 内参 (BMI088 典型值)
+    imu_gyro_cov: 1.0
+    imu_acc_cov: 1.0
+    imu_gyro_bias_cov: 0.0001
+    imu_acc_bias_cov: 0.0001
+    # Gravity
+    gravity_align: true
