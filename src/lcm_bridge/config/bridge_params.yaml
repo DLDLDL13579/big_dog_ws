@@ -1,15 +1,15 @@
 # LCM Bridge 配置
-# UpBoard TCP 指令地址（请根据实际网络修改）
+# UpBoard: 10.0.0.6 (enP8p1s0 直连)
 
 lcm_url: "udpm://239.255.76.67:7667?ttl=255"
-upboard_ip: "192.168.1.100"       # TODO: UpBoard 实际 IP
+upboard_ip: "10.0.0.6"
 upboard_port: 3333
 
 # LCM 频道名（与 UpBoard 发布的一致）
 lcm_channels:
-  odometry: "global_to_robot"      # localization_lcmt → /odom (核心定位来源)
-  imu: "state_estimator"            # state_estimator_lcmt → /upboard/state_estimator (滤波后状态, 非原始IMU)
-  joints: "spi_data"                # spi_data_t → /joint_states
+  odometry: "global_to_robot"
+  imu: "state_estimator"
+  joints: "spi_data"
 
 # TF frame names
 frames:
@@ -19,6 +19,6 @@ frames:
 # ROS2 topic names
 topics:
   odom: "/odom"
-  imu: "/upboard/state_estimator"   # 滤波后状态 (姿态+角速度+加速度), 非原始 IMU
+  imu: "/upboard/state_estimator"
   joint_states: "/joint_states"
   cmd_vel: "/cmd_vel"

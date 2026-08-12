@@ -26,6 +26,12 @@ import struct
 import socket
 import threading
 
+# Auto-injected: ensure LCM lib is importable
+import sys, os as _os
+_lcm_path = _os.path.expanduser('~/.local/lib/python3.10/site-packages')
+if _lcm_path not in sys.path:
+    sys.path.insert(0, _lcm_path)
+
 import lcm
 import rclpy
 from rclpy.node import Node
@@ -37,7 +43,7 @@ from tf2_ros import TransformBroadcaster
 LCM_URL = "udpm://239.255.76.67:7667?ttl=255"
 
 # UpBoard TCP 指令配置（请根据实际修改）
-DEFAULT_UPBOARD_IP = "192.168.1.100"
+DEFAULT_UPBOARD_IP = "10.0.0.6"
 UPBOARD_PORT = 3333
 
 # ============================================================
