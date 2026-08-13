@@ -2,7 +2,7 @@
 
 > 适用设备：Jetson Orin NX `nvidia@192.168.1.48`（ARM64 / Ubuntu 22.04 / ROS Humble）
 > 工作空间：`/home/nvidia/dog_ws`（**单工作空间，所有包含雷达驱动已合并**）
-> 最后更新：2026-08-13
+> 最后更新：2026-08-13（定位架构已切换为 ICP 3D 全局定位）
 
 ---
 
@@ -14,23 +14,31 @@ source /home/nvidia/dog_ws/install/setup.bash
 ```
 
 > 说明：
-> - `dog_ws` 是 `--symlink-install` 构建，改 `src/` 下的 launch/config 直接生效，无需重新 build。
-> - **Livox 雷达驱动已合并进 dog_ws**（`src/livox_ros_driver2`），不再需要单独的 `ws_livox` 工作空间。
-> - 机械狗默认 `ROS_DOMAIN_ID=0`（不设置即可）；注意与小车1项目（`ROS_DOMAIN_ID=1`）隔离，勿混。
+> - `dog_ws` 是 `--symlink-install` 构建，改 `src/` 下的 launch/config 直接生效（**Python 无需重 build；C++ 需重 build**）。
+> - **Livox 雷达驱动已合并进 dog_ws**（`src/livox_ros_driver2`），不再需要单独的 `ws_livox`。
+> - 机械狗默认 `ROS_DOMAIN_ID=0`（不设置即可）；与小车1项目（`ROS_DOMAIN_ID=1`）隔离，勿混。
 
 ---
 
 ## 1. 一键启动（推荐入口）
 
 ```bash
-# 建图模式（默认）：FAST-LIO2 SLAM + 传感器 + LCM 桥接
-ros2 launch dog_brain bringup_launch.py mode:=mapping
+# 建图模式：FAST-LIO2 SLAM + 传感器 + LCM 桥接
+ros2 launch dog_brain mapping_launch.py
 
-# 导航模式：FAST-LIO-Localization + Nav2 3D 导航
-ros2 launch dog_brain bringup_launch.py mode:=navigation
+# 导航模式：FAST-LIO-Localization (ICP 3D 定位) + Nav2 3D 导航
+ros2 launch dog_brain navigation_launch.py
 ```
 
-`bringup_launch.py` 是总入口，按 `mode:=` 分发到 `mapping_launch.py` 或 `navigation_launch.py`。
+> ⚠️ **定位方案已切换（2026-08-13）**：彻底移除 AMCL 2D 粒子滤波，绝对定位权交给
+> FAST-LIO-Localization 的 ICP 3D 全局定位四件套。理由：机械狗全地形导航，3D 雷达/深度相机
+> 无 2D scan 输出，压扁喂 AMCL 会在楼梯/坑洼场景退化。
+>
+> 定位四件套（navigation_launch.py 自动拉起）：
+> - `fastlio_mapping`（FAST-LIO2 激光惯性里程计 → `/Odometry` + `odom→base_link` TF）
+> - `global_map_publisher.py`（PCD 地图 → `/global_map`）
+> - `global_localization.py`（ICP 匹配 → `/map_to_odom`）
+> - `transform_fusion.py`（融合 → `map→odom` TF，**绝对定位权**）
 
 ---
 
@@ -62,7 +70,7 @@ ros2 launch dog_sensors mid360_launch.py
 
 - 点云：`/livox/lidar`（PointCloud2，10 Hz，frame_id=livox_frame）
 - IMU：`/livox/imu`（BMI088，200 Hz）
-- 驱动：`livox_ros_driver2`（已在 dog_ws 内，`ros2 pkg executables livox_ros_driver2` 可查到）
+- 驱动：`livox_ros_driver2`（已在 dog_ws 内）
 
 ### 2.4 建图（FAST-LIO2）
 
@@ -70,17 +78,19 @@ ros2 launch dog_sensors mid360_launch.py
 ros2 launch dog_brain mapping_launch.py
 ```
 
-- 依赖 `fast_lio_sam` 包的 `fastlio_mapping` 可执行文件
-- ⚠️ **当前阻塞：`fast_lio_sam` 尚未编译**（见 §5）
+- 依赖 `fast_lio_localization` 包的 `fastlio_mapping`（✅ 已编译）
+- 参数：`fast_lio_localization/config/mid360.yaml`（topic `/livox/lidar` + `/livox/imu`）
 
 ### 2.5 导航（FAST-LIO-Loc + Nav2）
 
 ```bash
 ros2 launch dog_brain navigation_launch.py
+# 自定义地图路径
+ros2 launch dog_brain navigation_launch.py map_pcd:=/path/to/map.pcd
 ```
 
-- 依赖 `fast_lio_sam` 包的 `fastlio_localization` + `nav2_bringup`
-- ⚠️ **同样阻塞于 `fast_lio_sam` 未编译**
+- 依赖：`fast_lio_localization` 四件套 + `nav2_bringup`（✅ 已编译）
+- 前置：需有 `dog_brain/maps/lab_3d_map.pcd` 地图文件
 
 ### 2.6 LCM 桥接（UpBoard ↔ ROS2）
 
@@ -112,6 +122,9 @@ ros2 run tf2_tools view_frames
 # 或实时监听 TF
 ros2 topic echo /tf
 
+# 查看定位是否工作（map→odom TF 由 transform_fusion 发布）
+ros2 topic echo /map_to_odom --once
+
 # 可视化
 rviz2
 ```
@@ -130,7 +143,9 @@ rviz2
 | 相机点云 topic | `/camera/depth/color/points` |
 | 雷达点云 topic | `/livox/lidar` |
 | 雷达 IMU topic | `/livox/imu` |
-| 里程计 topic | `/odom` |
+| 激光里程计 topic | `/Odometry`（FAST-LIO2） |
+| 运动学里程计 topic | `/odom`（lcm_bridge） |
+| 全局地图 topic | `/global_map` |
 | 关节状态 topic | `/joint_states` |
 | 速度指令 topic | `/cmd_vel` |
 
@@ -138,23 +153,24 @@ rviz2
 
 ## 5. 已知阻塞项 / 注意事项
 
-1. **`fast_lio_sam` 未编译**
-   - `install/` 下没有 `fastlio_mapping` / `fastlio_localization` 可执行文件，`src/` 下也没有 fast_lio 源码
-   - 影响：`mapping_launch.py`、`navigation_launch.py`、`bringup_launch.py` 会因找不到可执行文件而失败
-   - 待办：补全 fast_lio_sam 源码并 `colcon build`
-
-2. **Mid-360 网口网段冲突**
+1. **Mid-360 网口网段冲突**（未解决）
    - 当前 `enP8p1s0` = `10.0.0.48/24`（连 UpBoard 的网段）
    - 但 `mid360_config.json` 里 host 要求 `192.168.1.50`，雷达默认 `192.168.1.12`
    - 两个网段不一致 → 需确认 Mid-360 接哪个网口、是否需配双 IP 或改配置
    - 症状：启动 mid360 报 `bind failed` / `Failed to init livox lidar sdk`
 
+2. **地图文件缺失**（导航模式前置）
+   - 导航需要 `dog_brain/maps/lab_3d_map.pcd`（由建图模式生成后保存）
+
 3. **D435i 相机**
    - 必须插 USB 3.0 数据线（否则降到 USB 2.1，点云只有 14 Hz）
-   - 红外流(Infra1/2)已关闭；若未来需开启，必须设 `depth_module.infra_profile: '640x480x30'` 与 `depth_profile` 一致，否则触发 v4l2 Frames Timeout（详见 d435i_launch.py 注释）
+   - 红外流(Infra1/2)已关闭；若未来需开启，必须设 `depth_module.infra_profile: '640x480x30'` 与 `depth_profile` 一致，否则触发 v4l2 Frames Timeout
 
 4. **ROS_DOMAIN_ID 隔离**
-   - 机械狗默认域 0，小车1 项目用域 1，注意区分，避免串扰
+   - 机械狗默认域 0，小车1 项目用域 1，注意区分
+
+5. **Nav2 全链路联调未做**
+   - 点云 → 代价地图 voxel_layer 的完整链路需等雷达就位后实测
 
 ---
 
@@ -164,14 +180,15 @@ rviz2
 # ① 建图
 source /opt/ros/humble/setup.bash
 source /home/nvidia/dog_ws/install/setup.bash
-ros2 launch dog_brain bringup_launch.py mode:=mapping
+ros2 launch dog_brain mapping_launch.py
 # ... 推动机器狗建图 ...
 
 # ② 保存 3D 地图（PCD）
-ros2 run pcl_ros pointcloud_to_pcd input:=/registered_scan
+ros2 service call /map_save std_srvs/srv/Trigger
+# 把生成的 PCD 放到 dog_brain/maps/lab_3d_map.pcd
 
-# ③ 导航（地图放到 dog_brain/maps/lab_3d_map.pcd）
-ros2 launch dog_brain bringup_launch.py mode:=navigation
+# ③ 导航
+ros2 launch dog_brain navigation_launch.py
 ```
 
 ---
@@ -180,9 +197,10 @@ ros2 launch dog_brain bringup_launch.py mode:=navigation
 
 ```
 dog_ws/src/
-├── dog_brain/          # 大脑：FAST-LIO2 建图 + Nav2 3D 导航 (launch + config)
-├── dog_description/    # URDF 模型 + robot_state_publisher
-├── dog_sensors/        # 传感器 launch：D435i + Mid-360 (含 mid360_config.json)
-├── lcm_bridge/         # UpBoard ↔ ROS2 桥接
-└── livox_ros_driver2/  # Livox 雷达驱动（已合并，Humble 适配版）
+├── dog_brain/             # 大脑：FAST-LIO2 建图 + Nav2 3D 导航 (launch + config)
+├── dog_description/       # URDF 模型 + robot_state_publisher
+├── dog_sensors/           # 传感器 launch：D435i + Mid-360 (含 mid360_config.json)
+├── lcm_bridge/            # UpBoard ↔ ROS2 桥接
+├── livox_ros_driver2/     # Livox 雷达驱动（已合并，Humble 适配版）
+└── fast_lio_localization/ # FAST-LIO2 建图 + ICP 全局定位四件套（myeongw002 通用版）
 ```
