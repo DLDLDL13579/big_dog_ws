@@ -79,8 +79,11 @@ class LcmRosBridge(Node):
 
         self.declare_parameter('upboard_ip', DEFAULT_UPBOARD_IP)
         self.declare_parameter('upboard_port', UPBOARD_PORT)
+        # 导航/建图模式下 odom TF 由 FAST-LIO 提供, 此处默认关闭避免 TF 冲突
+        self.declare_parameter('publish_odom_tf', False)
         self.upboard_ip = self.get_parameter('upboard_ip').value
         self.upboard_port = self.get_parameter('upboard_port').value
+        self.publish_odom_tf = self.get_parameter('publish_odom_tf').value
 
         # === ROS2 Publishers ===
         self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
@@ -136,6 +139,9 @@ class LcmRosBridge(Node):
         qz = sy * cp * cr - cy * sp * sr
 
         # 发布 odom→base_link TF
+        # ⚠️ 导航/建图模式下由 FAST-LIO 提供 odom→base_link TF (激光惯性里程计)
+        #    UpBoard 运动学里程计仅作本体运动闭环, 不在 ROS 侧重复广播 TF
+        #    但 /odom Odometry 消息仍需发布 (供调试/备用里程计源)
         t = TransformStamped()
         t.header.stamp = now.to_msg()
         t.header.frame_id = 'odom'
@@ -147,7 +153,8 @@ class LcmRosBridge(Node):
         t.transform.rotation.x = qx
         t.transform.rotation.y = qy
         t.transform.rotation.z = qz
-        self.tf_broadcaster.sendTransform(t)
+        if self.publish_odom_tf:
+            self.tf_broadcaster.sendTransform(t)
 
         # 发布 Odometry
         odom = Odometry()

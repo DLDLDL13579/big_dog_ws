@@ -1,14 +1,21 @@
 # 机械狗导航模式 (Navigation Mode)
-# 启动: FAST-LIO-Localization (重定位) + Nav2 (3D Voxel Layer) + 传感器 + 桥接
+# 启动: FAST-LIO-Localization (ICP 全局定位) + Nav2 (3D Voxel Layer) + 传感器 + 桥接
 #
-# 前置条件: 已跑 mapping_launch.py 并保存 3D PCD 地图
+# 前置条件: 已跑 mapping_launch.py 建图并保存 3D PCD 地图
+#
+# 定位链路 (接法 A: ICP 3D 全局定位, 彻底替换 AMCL):
+#   global_map_publisher.py  → 加载 PCD 地图 → /global_map
+#   fastlio_mapping          → FAST-LIO2 激光惯性里程计 → /Odometry + odom→base_link TF
+#   global_localization.py   → ICP 匹配 → /map_to_odom
+#   transform_fusion.py      → 融合 → map→odom TF (绝对定位权)
+#
 # 输入:
 #   maps/lab_3d_map.pcd (全局地图)
 #   /livox/lidar (实时点云)
-#   /odom (lcm_bridge)
+#   /odom (lcm_bridge, UpBoard 运动学闭环)
 # 输出:
 #   /cmd_vel → TCP → UpBoard
-#   TF: map → odom (FAST-LIO-Loc) → base_link (lcm_bridge)
+#   TF: map → odom (FAST-LIO-Loc) → base_link (FAST-LIO2)
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
@@ -50,6 +57,7 @@ def generate_launch_description():
     )
 
     # ── LCM Bridge ───────────────────────────────────────────────
+    # publish_odom_tf=False: TF 由 FAST-LIO2 提供
     lcm_bridge = Node(
         package='lcm_bridge',
         executable='bridge_node',
@@ -57,25 +65,58 @@ def generate_launch_description():
         output='screen',
         parameters=[PathJoinSubstitution([
             FindPackageShare('lcm_bridge'), 'config', 'bridge_params.yaml'
-        ])]
+        ]), {'publish_odom_tf': False}]
     )
 
-    # ── FAST-LIO-Localization (全局重定位) ───────────────────────
-    # 加载 PCD 地图，发布 map → odom TF
-    fast_lio_loc = Node(
-        package='fast_lio_sam',
-        executable='fastlio_localization',
-        name='fastlio_localization',
+    # ── FAST-LIO-Localization (ICP 全局重定位) ──────────────────
+    # 定位四件套, 发布 map→odom TF (绝对定位权)
+    # 1. FAST-LIO2 里程计 (发布 /Odometry + odom→base_link TF)
+    fast_lio2 = Node(
+        package='fast_lio_localization',
+        executable='fastlio_mapping',
+        name='fastlio_mapping',
+        output='screen',
+        parameters=[PathJoinSubstitution([
+            FindPackageShare('fast_lio_localization'), 'config', 'mid360.yaml'
+        ])],
+        remappings=[
+            ('/livox/lidar', '/livox/lidar'),
+            ('/livox/imu', '/livox/imu'),
+        ],
+    )
+
+    # 2. 全局地图发布 (PCD → /global_map)
+    global_map_pub = Node(
+        package='fast_lio_localization',
+        executable='global_map_publisher.py',
+        name='global_map_publisher',
+        output='screen',
+        parameters=[{'map_file_path': LaunchConfiguration('map_pcd')}]
+    )
+
+    # 3. 全局定位 (ICP 匹配 → /map_to_odom)
+    global_loc = Node(
+        package='fast_lio_localization',
+        executable='global_localization.py',
+        name='global_localization',
         output='screen',
         parameters=[{
-            'pcd_file_path': LaunchConfiguration('map_pcd'),
-            'use_imu': True,
-            'imu_topic': '/livox/imu',
-            'lidar_topic': '/livox/lidar',
-        }],
+            'map_voxel_size': 0.1,
+            'scan_voxel_size': 0.1,
+            'freq_localization': 0.5,
+            'localization_th': 0.9,
+        }]
     )
 
-    # ── Nav2 3D Navigation ───────────────────────────────────────
+    # 4. TF 融合 (map→odom TF)
+    transform_fusion = Node(
+        package='fast_lio_localization',
+        executable='transform_fusion.py',
+        name='transform_fusion',
+        output='screen',
+    )
+
+    # ── Nav2 3D Navigation (纯避障+路径规划, 不含 AMCL) ─────────
     nav2_params = PathJoinSubstitution([
         FindPackageShare('dog_brain'), 'config', 'nav2_3d_params.yaml'
     ])
@@ -98,6 +139,9 @@ def generate_launch_description():
         sensors_launch,
         robot_state_pub,
         lcm_bridge,
-        fast_lio_loc,
+        fast_lio2,
+        global_map_pub,
+        global_loc,
+        transform_fusion,
         nav2_bringup,
     ])

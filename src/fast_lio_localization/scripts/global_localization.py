@@ -103,7 +103,7 @@ class GlobalLocalizationNode(Node):
         self.cur_odom = msg
 
     def cb_save_cur_scan(self, msg: PointCloud2):
-        msg.header.frame_id = 'camera_init'
+        msg.header.frame_id = 'odom'
         msg.header.stamp    = self.get_clock().now().to_msg()
         self.pub_pc_in_map.publish(msg)
 

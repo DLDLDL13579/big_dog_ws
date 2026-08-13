@@ -70,7 +70,7 @@ class TransformFusionNode(Node):
         t_msg = TransformStamped()
         t_msg.header.stamp = self.get_clock().now().to_msg()
         t_msg.header.frame_id    = 'map'
-        t_msg.child_frame_id     = 'camera_init'
+        t_msg.child_frame_id     = 'odom'
         t_msg.transform.translation.x = trans[0]
         t_msg.transform.translation.y = trans[1]
         t_msg.transform.translation.z = trans[2]
@@ -89,7 +89,7 @@ class TransformFusionNode(Node):
         loc_msg = Odometry()
         loc_msg.header.stamp          = odom.header.stamp
         loc_msg.header.frame_id       = 'map'
-        loc_msg.child_frame_id        = 'body'
+        loc_msg.child_frame_id        = 'base_link'
         loc_msg.pose.pose.position    = Point(x=xyz[0], y=xyz[1], z=xyz[2])
         loc_msg.pose.pose.orientation = Quaternion(
             x=quat2[0], y=quat2[1], z=quat2[2], w=quat2[3]

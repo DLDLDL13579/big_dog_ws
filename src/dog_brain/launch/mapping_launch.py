@@ -2,16 +2,17 @@
 # 启动: FAST-LIO2 (LiDAR+IMU 紧耦合) + 传感器 + 状态广播 + 桥接
 #
 # 输出:
-#   /livox/lidar    (PointCloud2, 10Hz)
+#   /livox/lidar    (CustomMsg, 10Hz) → FAST-LIO2 消费
 #   /livox/imu      (Imu, 200Hz, BMI088)
-#   /odom            (NavSatOdometry, lcm_bridge)
+#   /odom            (Odometry, lcm_bridge, UpBoard 运动学闭环)
+#   /cloud_registered (FAST-LIO2 全局去畸变点云)
+#   /Odometry        (FAST-LIO2 激光惯性里程计)
 #   /joint_states    (sensor_msgs)
-#   TF: map → odom → base_link → {livox_frame, camera_link, legs}
+#   TF: odom → base_link (FAST-LIO2) → {livox_frame, camera_link, legs}
 #
-# 建图完成后用 map_saver_cli 保存 3D PCD:
-#   ros2 run pcl_ros pointcloud_to_pcd input:=/registered_scan
+# 建图完成后保存 3D PCD:
+#   ros2 service call /map_save std_srvs/srv/Trigger
 
-from pathlib import Path
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
@@ -47,6 +48,7 @@ def generate_launch_description():
     )
 
     # ── LCM Bridge (odom + joint_states) ─────────────────────────
+    # ⚠️ publish_odom_tf=False: odom→base_link TF 由 FAST-LIO2 独占提供
     lcm_bridge = Node(
         package='lcm_bridge',
         executable='bridge_node',
@@ -54,19 +56,20 @@ def generate_launch_description():
         output='screen',
         parameters=[PathJoinSubstitution([
             FindPackageShare('lcm_bridge'), 'config', 'bridge_params.yaml'
-        ])]
+        ]), {'publish_odom_tf': False}]
     )
 
-    # ── FAST-LIO2 ────────────────────────────────────────────────
-    # 依赖: livox_ros_driver2 (提供 /livox/lidar + /livox/imu)
-    # map → odom TF 由 FAST-LIO2 提供
+    # ── FAST-LIO2 (建图) ─────────────────────────────────────────
+    # package=fast_lio_localization (myeongw002/FAST_LIO_LOCALIZATION_ROS2)
+    # 依赖: livox_ros_driver2 (提供 /livox/lidar CustomMsg + /livox/imu)
+    # 输出 odom→base_link TF (激光惯性里程计)
     fast_lio2 = Node(
-        package='fast_lio_sam',
+        package='fast_lio_localization',
         executable='fastlio_mapping',
         name='fastlio_mapping',
         output='screen',
         parameters=[PathJoinSubstitution([
-            FindPackageShare('dog_brain'), 'config', 'fast_lio_mapping.yaml'
+            FindPackageShare('fast_lio_localization'), 'config', 'mid360.yaml'
         ])],
         remappings=[
             ('/livox/lidar', '/livox/lidar'),
