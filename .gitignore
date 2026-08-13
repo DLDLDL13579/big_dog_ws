@@ -3,3 +3,4 @@
 /log
 *.bak
 __pycache__/
+*.bak_*
