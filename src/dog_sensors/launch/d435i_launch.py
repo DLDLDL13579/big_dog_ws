@@ -9,6 +9,12 @@
 #  3. frame 根 = {camera_name}_{base_frame_id} → camera_name='camera' + base_frame_id='link'
 #     = 'camera_link'，匹配 URDF 的 camera_link link，TF 链 base_link→camera_link 打通
 #  4. 修正 profile: D435i 不支持 1280x720x30（深度仅 6Hz、彩色仅 15Hz）→ 改 640x480x30
+#  5. 关闭红外流(Infra1/2)。根因已钉死: Depth 与 Infra 分辨率不一致(Depth 640x480 vs
+#     Infra 默认 848x480) 时，同一对 stereo 红外传感器三路流叠加 → UVC 等时端点带宽/模式
+#     协商崩溃 → 内核 -71 EPROTO → v4l2 收不到帧 → Frames Timeout，点云 0 帧。
+#     解法二选一: (A) 关掉 Infra 流(V1 架构不需要红外，已采用) (B) 统一分辨率 640x480。
+#     若未来需要重新开启 Infra，必须同时设 depth_module.infra_profile: '640x480x30' 并
+#     与 depth_profile 保持一致，否则会再次触发该超时。
 
 from launch import LaunchDescription
 from launch_ros.actions import Node
@@ -36,6 +42,11 @@ def generate_launch_description():
             'pointcloud__neon_.enable':   True,
             # 对齐（深度对齐到彩色，点云带 RGB）
             'align_depth.enable':         True,
+            # 关键修复5: 关闭红外流。根因=Depth与Infra分辨率不一致(见文件头说明5)。
+            # V1 架构不需要红外，关闭是最干净解法。若未来需开 Infra，必须同时设
+            # 'depth_module.infra_profile': '640x480x30' 与 depth_profile 保持一致。
+            'enable_infra1':              False,
+            'enable_infra2':              False,
             # IMU（V1 暂不用）
             'enable_gyro':                False,
             'enable_accel':               False,
