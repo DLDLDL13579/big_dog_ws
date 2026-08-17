@@ -20,8 +20,9 @@
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, Command
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 from launch_ros.substitutions import FindPackageShare
 
 
@@ -50,9 +51,7 @@ def generate_launch_description():
         name='robot_state_publisher',
         output='screen',
         parameters=[{
-            'robot_description': PathJoinSubstitution([
-                FindPackageShare('dog_description'), 'urdf', 'dog.urdf'
-            ])
+            'robot_description': ParameterValue(Command(['cat ', PathJoinSubstitution([FindPackageShare('dog_description'), 'urdf', 'dog.urdf'])]), value_type=str)
         }]
     )
 
@@ -63,9 +62,7 @@ def generate_launch_description():
         executable='bridge_node',
         name='lcm_bridge',
         output='screen',
-        parameters=[PathJoinSubstitution([
-            FindPackageShare('lcm_bridge'), 'config', 'bridge_params.yaml'
-        ]), {'publish_odom_tf': False}]
+        parameters=[{'publish_odom_tf': False}]
     )
 
     # ── FAST-LIO-Localization (ICP 全局重定位) ──────────────────

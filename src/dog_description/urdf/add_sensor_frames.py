@@ -29,7 +29,7 @@ sensors = '''
   <joint name="camera_joint" type="fixed">
     <parent link="base_link"/>
     <child link="camera_link"/>
-    <origin xyz="0.35 0 0.08" rpy="0 0 0"/>
+    <origin xyz="0.35 0 0.08" rpy="3.141592653589793 0 0"/>
   </joint>
 
 </robot>'''
