@@ -20,11 +20,16 @@
 #   FL abad=FL_hip_joint, hip=FL_thigh_joint, knee=FL_calf_joint, wheel=FL_wheel_joint
 #   FR, RL, RR 同理
 # ⚠️ 需接实狗后验证数组顺序是否与 MiniCheetah 默认一致
+#
+# 配置加载 (2026-08-14 修复):
+#   所有可配置项从 config/bridge_params.yaml 读取, 缺失时回退到本文件默认值。
+#   ROS2 参数 (--ros-args -p) 仍可覆盖 upboard_ip / upboard_port / publish_odom_tf。
 
 import math
 import struct
 import socket
 import threading
+import os
 
 # Auto-injected: ensure LCM lib is importable
 import sys, os as _os
@@ -32,6 +37,7 @@ _lcm_path = _os.path.expanduser('~/.local/lib/python3.10/site-packages')
 if _lcm_path not in sys.path:
     sys.path.insert(0, _lcm_path)
 
+import yaml
 import lcm
 import rclpy
 from rclpy.node import Node
@@ -40,11 +46,81 @@ from sensor_msgs.msg import Imu, JointState
 from geometry_msgs.msg import TransformStamped, Twist
 from tf2_ros import TransformBroadcaster
 
-LCM_URL = "udpm://239.255.76.67:7667?ttl=255"
+try:
+    from ament_index_python.packages import get_package_share_directory
+except ImportError:
+    get_package_share_directory = None
 
-# UpBoard TCP 指令配置（请根据实际修改）
-DEFAULT_UPBOARD_IP = "10.0.0.6"
-UPBOARD_PORT = 3333
+# ============================================================
+# 默认配置（当 bridge_params.yaml 缺失或字段不全时回退）
+# ============================================================
+DEFAULT_CONFIG = {
+    'lcm_url': "udpm://239.255.76.67:7667?ttl=255",
+    'upboard_ip': "10.0.0.6",
+    'upboard_port': 3333,
+    'lcm_channels': {
+        'odometry': 'global_to_robot',
+        'imu': 'state_estimator',
+        'joints': 'spi_data',
+    },
+    'frames': {
+        'odom': 'odom',
+        'base_link': 'base_link',
+    },
+    'topics': {
+        'odom': '/odom',
+        'imu': '/upboard/state_estimator',
+        'joint_states': '/joint_states',
+        'cmd_vel': '/cmd_vel',
+    },
+}
+
+
+def _deep_merge(base, override):
+    """递归合并 dict, override 覆盖 base。"""
+    out = dict(base)
+    for k, v in (override or {}).items():
+        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def load_config():
+    """加载 config/bridge_params.yaml。
+
+    查找顺序:
+      1. ament 包 share 目录 (install 环境)
+      2. 源码树 src/<pkg>/config/
+      3. ~/dog_ws/src/lcm_bridge/config/
+    全部缺失 → 返回 DEFAULT_CONFIG。
+    """
+    candidates = []
+
+    if get_package_share_directory is not None:
+        try:
+            pkg_share = get_package_share_directory('lcm_bridge')
+            candidates.append(os.path.join(pkg_share, 'config', 'bridge_params.yaml'))
+        except Exception:
+            pass
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    candidates.append(os.path.join(here, '..', 'config', 'bridge_params.yaml'))
+    candidates.append(os.path.expanduser('~/dog_ws/src/lcm_bridge/config/bridge_params.yaml'))
+
+    for path in candidates:
+        try:
+            if path and os.path.isfile(path):
+                with open(path, 'r') as f:
+                    data = yaml.safe_load(f) or {}
+                merged = _deep_merge(DEFAULT_CONFIG, data)
+                return merged, path
+        except Exception as e:
+            print(f'[lcm_bridge] 读取配置 {path} 失败: {e}', file=sys.stderr)
+
+    return dict(DEFAULT_CONFIG), None
+
 
 # ============================================================
 # 关节名映射: LCM spi_data 数组 → URDF joint name
@@ -77,8 +153,31 @@ class LcmRosBridge(Node):
     def __init__(self):
         super().__init__('lcm_bridge')
 
-        self.declare_parameter('upboard_ip', DEFAULT_UPBOARD_IP)
-        self.declare_parameter('upboard_port', UPBOARD_PORT)
+        # ── 加载 yaml 配置 ──────────────────────────────────
+        self.config, self.config_path = load_config()
+        self.lcm_url = self.config.get('lcm_url', DEFAULT_CONFIG['lcm_url'])
+        lcm_channels = self.config.get('lcm_channels', DEFAULT_CONFIG['lcm_channels'])
+        topics = self.config.get('topics', DEFAULT_CONFIG['topics'])
+        frames = self.config.get('frames', DEFAULT_CONFIG['frames'])
+
+        # LCM 频道名
+        self.ch_odom = lcm_channels.get('odometry', 'global_to_robot')
+        self.ch_imu = lcm_channels.get('imu', 'state_estimator')
+        self.ch_joints = lcm_channels.get('joints', 'spi_data')
+
+        # ROS2 topic 名
+        self.topic_odom = topics.get('odom', '/odom')
+        self.topic_imu = topics.get('imu', '/upboard/state_estimator')
+        self.topic_joints = topics.get('joint_states', '/joint_states')
+        self.topic_cmd_vel = topics.get('cmd_vel', '/cmd_vel')
+
+        # TF frame 名
+        self.frame_odom = frames.get('odom', 'odom')
+        self.frame_base = frames.get('base_link', 'base_link')
+
+        # ── ROS2 参数（默认值取自 yaml, 可被 --ros-args -p 覆盖）──
+        self.declare_parameter('upboard_ip', str(self.config.get('upboard_ip', DEFAULT_CONFIG['upboard_ip'])))
+        self.declare_parameter('upboard_port', int(self.config.get('upboard_port', DEFAULT_CONFIG['upboard_port'])))
         # 导航/建图模式下 odom TF 由 FAST-LIO 提供, 此处默认关闭避免 TF 冲突
         self.declare_parameter('publish_odom_tf', False)
         self.upboard_ip = self.get_parameter('upboard_ip').value
@@ -86,26 +185,30 @@ class LcmRosBridge(Node):
         self.publish_odom_tf = self.get_parameter('publish_odom_tf').value
 
         # === ROS2 Publishers ===
-        self.odom_pub = self.create_publisher(Odometry, '/odom', 10)
+        self.odom_pub = self.create_publisher(Odometry, self.topic_odom, 10)
         # /upboard/state_estimator: 滤波后状态 (含姿态/角速度/加速度) — 非原始 IMU
-        self.imu_pub = self.create_publisher(Imu, '/upboard/state_estimator', 10)
-        self.joint_pub = self.create_publisher(JointState, '/joint_states', 10)
+        self.imu_pub = self.create_publisher(Imu, self.topic_imu, 10)
+        self.joint_pub = self.create_publisher(JointState, self.topic_joints, 10)
         self.tf_broadcaster = TransformBroadcaster(self)
 
         # === ROS2 Subscribers ===
         self.cmd_vel_sub = self.create_subscription(
-            Twist, '/cmd_vel', self.cmd_vel_callback, 10)
+            Twist, self.topic_cmd_vel, self.cmd_vel_callback, 10)
 
         # === LCM init (在独立线程运行) ===
-        self.lc = lcm.LCM(LCM_URL)
-        self.lc.subscribe("global_to_robot", self.handle_odom)
-        self.lc.subscribe("state_estimator", self.handle_imu)
-        self.lc.subscribe("spi_data", self.handle_joints)
+        self.lc = lcm.LCM(self.lcm_url)
+        self.lc.subscribe(self.ch_odom, self.handle_odom)
+        self.lc.subscribe(self.ch_imu, self.handle_imu)
+        self.lc.subscribe(self.ch_joints, self.handle_joints)
 
         self.lcm_thread = threading.Thread(target=self.lcm_loop, daemon=True)
         self.lcm_thread.start()
 
-        self.get_logger().info(f'LCM Bridge started, LCM URL: {LCM_URL}')
+        self.get_logger().info(f'Config loaded from: {self.config_path}')
+        self.get_logger().info(f'LCM URL: {self.lcm_url}')
+        self.get_logger().info(f'LCM channels: odom={self.ch_odom}, imu={self.ch_imu}, joints={self.ch_joints}')
+        self.get_logger().info(f'ROS2 topics: {self.topic_odom}, {self.topic_imu}, {self.topic_joints}, {self.topic_cmd_vel}')
+        self.get_logger().info(f'Frames: odom={self.frame_odom}, base_link={self.frame_base}')
         self.get_logger().info(f'UpBoard TCP: {self.upboard_ip}:{self.upboard_port}')
         self.get_logger().info(f'Joint mapping: {LCM_JOINT_NAMES[:4]}... ({len(LCM_JOINT_NAMES)} joints)')
 
@@ -144,8 +247,8 @@ class LcmRosBridge(Node):
         #    但 /odom Odometry 消息仍需发布 (供调试/备用里程计源)
         t = TransformStamped()
         t.header.stamp = now.to_msg()
-        t.header.frame_id = 'odom'
-        t.child_frame_id = 'base_link'
+        t.header.frame_id = self.frame_odom
+        t.child_frame_id = self.frame_base
         t.transform.translation.x = x
         t.transform.translation.y = y
         t.transform.translation.z = z
@@ -159,8 +262,8 @@ class LcmRosBridge(Node):
         # 发布 Odometry
         odom = Odometry()
         odom.header.stamp = now.to_msg()
-        odom.header.frame_id = 'odom'
-        odom.child_frame_id = 'base_link'
+        odom.header.frame_id = self.frame_odom
+        odom.child_frame_id = self.frame_base
         odom.pose.pose.position.x = x
         odom.pose.pose.position.y = y
         odom.pose.pose.position.z = z
@@ -187,7 +290,7 @@ class LcmRosBridge(Node):
         now = self.get_clock().now()
         imu = Imu()
         imu.header.stamp = now.to_msg()
-        imu.header.frame_id = 'base_link'
+        imu.header.frame_id = self.frame_base
         imu.orientation.w = quat_w
         imu.orientation.x = quat_x
         imu.orientation.y = quat_y
