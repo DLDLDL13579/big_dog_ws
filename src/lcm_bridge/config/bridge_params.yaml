@@ -1,7 +1,7 @@
 # LCM Bridge 配置
 # UpBoard: 10.0.0.6 (enP8p1s0 直连)
 
-lcm_url: "udpm://239.255.76.67:7667?ttl=255"
+lcm_url: "udpm://239.255.76.67:7667?ttl=255&ifname=enP8p1s0"
 upboard_ip: "10.0.0.6"
 upboard_port: 3333
 

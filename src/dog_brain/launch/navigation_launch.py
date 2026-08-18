@@ -91,6 +91,15 @@ def generate_launch_description():
         parameters=[{'map_file_path': LaunchConfiguration('map_pcd')}]
     )
 
+    # 2b. PCD 3D 地图 → 2D OccupancyGrid (/map, 供 Nav2 static_layer)
+    pcd_to_map = Node(
+        package='fast_lio_localization',
+        executable='pcd_to_map_node.py',
+        name='pcd_to_map',
+        output='screen',
+        parameters=[{'pcd_path': LaunchConfiguration('map_pcd')}]
+    )
+
     # 3. 全局定位 (ICP 匹配 → /map_to_odom)
     global_loc = Node(
         package='fast_lio_localization',
@@ -138,6 +147,7 @@ def generate_launch_description():
         lcm_bridge,
         fast_lio2,
         global_map_pub,
+        pcd_to_map,
         global_loc,
         transform_fusion,
         nav2_bringup,

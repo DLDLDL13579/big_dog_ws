@@ -271,7 +271,25 @@ uint64_t PubHandler::GetEthPacketTimestamp(uint8_t timestamp_type, uint8_t* time
     return time.stamp;
   }
 
-  return std::chrono::high_resolution_clock::now().time_since_epoch().count();
+    // NoSync：雷达用上电起算的本地时钟。实时估计「雷达时钟->系统时钟(Unix)」偏移并补偿，
+  // 使点云/IMU 时间戳落到 Unix 纪元，与相机(global_time)、底盘(lcm_bridge 系统戳)对齐。
+  // inst = 系统时刻 - 雷达时间戳 = 真实偏移 + 单程网络延迟(>=0)，其下界即真实偏移。
+  // 用「快速下跟 + 缓慢上漂」的最小延迟滤波跟踪雷达钟漂(~30ppm)并抑制延迟尖峰。
+  static std::atomic<int64_t> offset_ns{0};
+  const int64_t kUpStepNs = 300;  // 每次调用允许的上漂步长（跟踪雷达钟漂）
+  const int64_t sys_ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::system_clock::now().time_since_epoch()).count();
+  const int64_t raw = static_cast<int64_t>(time.stamp);
+  const int64_t inst = sys_ns - raw;
+  int64_t off = offset_ns.load(std::memory_order_relaxed);
+  if (off == 0 || inst < off) {
+    offset_ns.store(inst, std::memory_order_relaxed);  // 快速下跟到延迟下界
+    off = inst;
+  } else {
+    off += kUpStepNs;                                   // 缓慢上漂跟踪钟漂
+    offset_ns.store(off, std::memory_order_relaxed);
+  }
+  return static_cast<uint64_t>(raw + off);
 }
 
 /*******************************/

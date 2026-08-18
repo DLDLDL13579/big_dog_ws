@@ -7,21 +7,24 @@ import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import Header
-from sensor_msgs_py import point_cloud2
+
 
 class MapPublisherNode(Node):
     def __init__(self):
         super().__init__('map_publisher')
-        self.declare_parameter('map_file_path', '/home/myungw00/ROS2/localization_ws/src/FAST_LIO_LOCALIZATION_ROS2/PCD/highway2.pcd')
+        self.declare_parameter('map_file_path', '/home/nvidia/dog_ws/src/dog_brain/maps/lab_3d_map.pcd')
         self.declare_parameter('interval', 5)
         path = self.get_parameter('map_file_path').value
         interval = self.get_parameter('interval').value
-        
-        self.global_map = None
+
+        self._cloud_msg = None
         if path:
             try:
-                self.global_map = o3d.io.read_point_cloud(path)
+                pcd = o3d.io.read_point_cloud(path)
                 self.get_logger().info(f'Loaded map from: {path}')
+                self._cloud_msg = self._build_cloud(pcd)
+                self.get_logger().info(
+                    f'Converted map to PointCloud2, {self._cloud_msg.width if self._cloud_msg else 0} points')
             except Exception as e:
                 self.get_logger().error(f'Failed to load PCD: {e}')
         else:
@@ -32,38 +35,44 @@ class MapPublisherNode(Node):
         self.get_logger().info(f'Interval for publishing map: {interval} seconds')
         self.get_logger().info('Map Publisher Node Initialized')
 
-    def publish_map(self):
-        if self.global_map is None:
-            self.get_logger().warn('Global map is not loaded; skipping publish')
-            return
-        points = np.asarray(self.global_map.points)
+    def _build_cloud(self, pcd):
+        """一次性把 open3d 点云转成 PointCloud2 并缓存（避免每帧 tolist()）"""
+        points = np.asarray(pcd.points, dtype=np.float32).reshape(-1, 3)
         if points.size == 0:
+            return None
+        n = points.shape[0]
+        msg = PointCloud2()
+        msg.header = Header()
+        msg.header.frame_id = 'map'
+        msg.height = 1
+        msg.width = n
+        msg.is_bigendian = False
+        msg.is_dense = True
+        msg.point_step = 12
+        msg.row_step = 12 * n
+        msg.fields = [
+            PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
+        ]
+        msg.data = points.tobytes()
+        return msg
+
+    def publish_map(self):
+        if self._cloud_msg is None:
+            self.get_logger().warn('Global map is not loaded; skipping publish', throttle_duration_sec=10)
             return
-        header = Header()
-        header.stamp = self.get_clock().now().to_msg()
-        header.frame_id = 'map'
-        try:
-            cloud = point_cloud2.create_cloud_xyz32(header, points.tolist())
-        except AttributeError:
-            fields = [
-                PointField(name='x', offset=0, datatype=PointField.FLOAT32, count=1),
-                PointField(name='y', offset=4, datatype=PointField.FLOAT32, count=1),
-                PointField(name='z', offset=8, datatype=PointField.FLOAT32, count=1),
-            ]
-            cloud = point_cloud2.create_cloud(header, fields, points.tolist())
-        self.pub_map.publish(cloud)
-        # self.get_logger().info('Published global map')
+        self._cloud_msg.header.stamp = self.get_clock().now().to_msg()
+        self.pub_map.publish(self._cloud_msg)
 
 
 def main(args=None):
     rclpy.init(args=args)
     node = MapPublisherNode()
-    try:
-        rclpy.spin(node)
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    rclpy.spin(node)
+    node.destroy_node()
+    rclpy.shutdown()
 
 
 if __name__ == '__main__':
-    main()        
+    main()
