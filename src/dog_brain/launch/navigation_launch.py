@@ -109,6 +109,14 @@ def generate_launch_description():
         parameters=[{'pcd_path': LaunchConfiguration('map_pcd')}]
     )
 
+    # 2d. 实时前方台阶检测 (D435i 近距, 供轮腿模态切换) [实验性,待现场标定]
+    step_detector = Node(
+        package='fast_lio_localization',
+        executable='step_detector_node.py',
+        name='step_detector',
+        output='screen',
+    )
+
     # 3. 全局定位 (ICP 匹配 → /map_to_odom)
     global_loc = Node(
         package='fast_lio_localization',
@@ -158,6 +166,7 @@ def generate_launch_description():
         global_map_pub,
         pcd_to_map,
         elevation_map,
+        step_detector,
         global_loc,
         transform_fusion,
         nav2_bringup,
