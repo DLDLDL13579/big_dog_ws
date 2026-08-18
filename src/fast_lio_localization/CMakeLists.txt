@@ -133,6 +133,7 @@ install(PROGRAMS
   scripts/publish_initial_pose.py
   scripts/global_map_publisher.py
   scripts/pcd_to_map_node.py
+  scripts/elevation_map_node.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

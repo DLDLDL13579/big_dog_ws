@@ -100,6 +100,15 @@ def generate_launch_description():
         parameters=[{'pcd_path': LaunchConfiguration('map_pcd')}]
     )
 
+    # 2c. PCD -> 2.5D 高程图 (/elevation_costmap, 越障/模态切换依据)
+    elevation_map = Node(
+        package='fast_lio_localization',
+        executable='elevation_map_node.py',
+        name='elevation_map',
+        output='screen',
+        parameters=[{'pcd_path': LaunchConfiguration('map_pcd')}]
+    )
+
     # 3. 全局定位 (ICP 匹配 → /map_to_odom)
     global_loc = Node(
         package='fast_lio_localization',
@@ -148,6 +157,7 @@ def generate_launch_description():
         fast_lio2,
         global_map_pub,
         pcd_to_map,
+        elevation_map,
         global_loc,
         transform_fusion,
         nav2_bringup,
