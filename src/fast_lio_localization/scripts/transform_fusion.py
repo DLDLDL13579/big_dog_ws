@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+import os
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 # coding=utf-8
 
 import copy
@@ -20,7 +24,7 @@ from nav_msgs.msg import Odometry
 class TransformFusionNode(Node):
     def __init__(self):
         super().__init__('transform_fusion')
-        self.FREQ_PUB_LOCALIZATION = 50.0  # Hz
+        self.FREQ_PUB_LOCALIZATION = 10.0  # Hz
 
         self.lock = threading.Lock()
         self.cur_odom_to_baselink = None

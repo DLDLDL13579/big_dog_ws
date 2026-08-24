@@ -85,19 +85,31 @@ class GlobalLocalizationNode(Node):
         if self.global_map is None:
             self.get_logger().warn('Waiting for global map before initial localization.')
             return
-        if self.initialized:
-            return
         if self.cur_scan is None:
             self.get_logger().warn('Waiting for first scan before initial localization.')
             return
 
-        initial = self.pose_to_mat(msg)
-        success = self.global_localization(initial)
-        if success:
+        # ★ CatPaw: 直接用初值发布定位，不做 ICP 匹配（避免跑偏）
+        # 后续 2Hz timer 会做精匹配微调
+        T = self.pose_to_mat(msg)
+        T[2, 3] = 0.0  # z 归零
+        self.T_map_to_odom = T.copy()
+
+        # 发布 map_to_odom
+        odom = Odometry()
+        xyz  = tf_transformations.translation_from_matrix(T)
+        quat = tf_transformations.quaternion_from_matrix(T)
+        odom.pose.pose.position    = Point(x=xyz[0], y=xyz[1], z=xyz[2])
+        odom.pose.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
+        odom.header.stamp          = self.get_clock().now().to_msg()
+        odom.header.frame_id       = 'map'
+        self.pub_map_to_odom.publish(odom)
+
+        if not self.initialized:
             self.initialized = True
             period = 1.0 / self.freq_localization
             self.create_timer(period, self.timer_callback)
-            self.get_logger().info('Initial global localization succeeded.')
+        self.get_logger().info('Global localization set directly (initialpose applied).')
 
     def cb_save_cur_odom(self, msg: Odometry):
         self.cur_odom = msg
@@ -113,7 +125,33 @@ class GlobalLocalizationNode(Node):
         self.cur_scan = pcd
 
     def timer_callback(self):
-        self.global_localization(self.T_map_to_odom)
+        # ★ CatPaw: 定时 ICP 只做精匹配(scale=1), 不做粗匹配, 避免跑偏
+        self.global_localization_refine(self.T_map_to_odom)
+
+    def global_localization_refine(self, pose_est):
+        """精匹配(仅 scale=1, 不做粗匹配), 用于定时器微调定位"""
+        self.get_logger().info('Refining localization via ICP...')
+        scan_copy = copy.deepcopy(self.cur_scan)
+
+        submap = self.crop_global_map_in_FOV(scan_copy, pose_est, self.cur_odom)
+
+        T, fitness = self.registration_at_scale(scan_copy, submap, initial=pose_est, scale=1)
+        self.get_logger().info(f'ICP refine fitness: {fitness:.3f}')
+
+        if fitness > self.localization_th:
+            self.T_map_to_odom = T.copy()
+            self.T_map_to_odom[2, 3] = 0.0  # z 归零
+            odom = Odometry()
+            xyz  = tf_transformations.translation_from_matrix(self.T_map_to_odom)
+            quat = tf_transformations.quaternion_from_matrix(self.T_map_to_odom)
+            odom.pose.pose.position    = Point(x=xyz[0], y=xyz[1], z=xyz[2])
+            odom.pose.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
+            odom.header.stamp          = self.get_clock().now().to_msg()
+            odom.header.frame_id       = 'map'
+            self.pub_map_to_odom.publish(odom)
+            self.get_logger().info(f'Refine updated localization (fitness={fitness:.3f}).')
+        else:
+            self.get_logger().warn(f'Refine failed (fitness={fitness:.3f} below threshold).')
 
     def global_localization(self, pose_est):
         self.get_logger().info('Performing global localization via ICP...')
@@ -126,10 +164,11 @@ class GlobalLocalizationNode(Node):
         self.get_logger().info(f'ICP fitness: {fitness:.3f}')
 
         if fitness > self.localization_th:
-            self.T_map_to_odom = T
+            self.T_map_to_odom = T.copy()
+            self.T_map_to_odom[2, 3] = 0.0  # ★ CatPaw: 强制 z 归零，避免 ICP 漂到地下
             odom = Odometry()
-            xyz  = tf_transformations.translation_from_matrix(T)
-            quat = tf_transformations.quaternion_from_matrix(T)
+            xyz  = tf_transformations.translation_from_matrix(self.T_map_to_odom)
+            quat = tf_transformations.quaternion_from_matrix(self.T_map_to_odom)
             # 올바른 Odometry 메시지 필드 설정
             odom.pose.pose.position    = Point(x=xyz[0], y=xyz[1], z=xyz[2])
             odom.pose.pose.orientation = Quaternion(x=quat[0], y=quat[1], z=quat[2], w=quat[3])
