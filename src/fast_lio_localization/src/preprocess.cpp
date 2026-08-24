@@ -185,6 +185,15 @@ void Preprocess::avia_handler(const livox_ros_driver2::msg::CustomMsg::UniquePtr
               || (abs(pl_full[i].z - pl_full[i - 1].z) > 1e-7)
               && (pl_full[i].x * pl_full[i].x + pl_full[i].y * pl_full[i].y + pl_full[i].z * pl_full[i].z > (blind * blind)))
           {
+            // ★ 自身范围屏蔽 (livox_frame -> base_link: +0.45,+0,+0.14)
+            // 长方体覆盖机身 + 背部 0.5m 未知负载; 剔除落入自身范围的点
+            {
+              float bx = pl_full[i].x + 0.45f;
+              float by = pl_full[i].y;
+              float bz = pl_full[i].z + 0.14f;
+              if (bx >= -0.55f && bx <= 0.55f && by >= -0.30f && by <= 0.30f && bz >= -0.15f && bz <= 0.60f)
+                continue;
+            }
             pl_surf.push_back(pl_full[i]);
           }
         }
