@@ -126,7 +126,7 @@ def generate_launch_description():
         parameters=[{
             'map_voxel_size': 0.1,
             'scan_voxel_size': 0.1,
-            'freq_localization': 0.5,
+            'freq_localization': 1.0,
             'localization_th': 0.9,
         }]
     )
