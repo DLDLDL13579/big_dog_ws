@@ -106,7 +106,8 @@
 
 | 设备 | IP | 备注 |
 |------|----|------|
-| Jetson Orin NX | `192.168.1.48` | 大脑，ROS_DOMAIN_ID=0 |
+| Jetson Orin NX | `192.168.31.91` | 大脑，ROS_DOMAIN_ID=11，WiFi 静态 IP |
+| Jetson WiFi 辅助 IP | `192.168.1.100/24` | Mid-360 雷达通信 (nmcli 已配置) |
 | UpBoard 小脑 | `10.0.0.6:3333` (TCP) | 通过 `enP8p1s0` 直连 |
 | Mid-360 雷达 | `192.168.1.195` | 配置 host IP `192.168.1.100` |
 | LCM 组播 | `udpm://239.255.76.67:7667` | ttl=255 |
@@ -690,13 +691,13 @@ ros2 topic echo /tf
 
 ## 已知问题与注意事项
 
-1. **Mid-360 网口网段冲突（未解决）**
-   - `enP8p1s0` = `10.0.0.48/24`（连 UpBoard）
-   - Mid-360 需要 `192.168.1.x` 网段
-   - 需配双 IP 或确认雷达接哪个网口
+1. **Mid-360 网段配置（已解决）**
+   - WiFi 主 IP `192.168.31.91/24` + 辅助 IP `192.168.1.100/24`（雷达通信）
+   - 若辅助 IP 丢失，雷达报 `bind failed`，执行:
+     `sudo nmcli connection modify Xiaomi_A389 +ipv4.addresses 192.168.1.100/24 && sudo nmcli connection up Xiaomi_A389`
 
 2. **ROS_DOMAIN_ID 隔离**
-   - 机械狗默认域 0，小车 1 项目用域 1，注意区分
+   - 机械狗默认域 11（~/.bashrc 中配置），与其他项目隔离
 
 3. **Nav2 全链路联调未做**
    - 点云 → 代价地图 voxel_layer 的完整链路需等雷达就位后实测

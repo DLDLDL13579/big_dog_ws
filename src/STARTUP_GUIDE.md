@@ -1,6 +1,6 @@
 # 机械狗 (dog_ws) 常用启动命令速查指南
 
-> 适用设备：Jetson Orin NX `nvidia@192.168.1.48`（ARM64 / Ubuntu 22.04 / ROS Humble）
+> 适用设备：Jetson Orin NX `nvidia@192.168.31.91`（ARM64 / Ubuntu 22.04 / ROS Humble）
 > 工作空间：`/home/nvidia/dog_ws`（**单工作空间，所有包含雷达驱动已合并**）
 > 最后更新：2026-08-13（定位架构已切换为 ICP 3D 全局定位）
 
@@ -16,7 +16,7 @@ source /home/nvidia/dog_ws/install/setup.bash
 > 说明：
 > - `dog_ws` 是 `--symlink-install` 构建，改 `src/` 下的 launch/config 直接生效（**Python 无需重 build；C++ 需重 build**）。
 > - **Livox 雷达驱动已合并进 dog_ws**（`src/livox_ros_driver2`），不再需要单独的 `ws_livox`。
-> - 机械狗默认 `ROS_DOMAIN_ID=0`（不设置即可）；与小车1项目（`ROS_DOMAIN_ID=1`）隔离，勿混。
+> - 机械狗默认 `ROS_DOMAIN_ID=11`（已在 ~/.bashrc 中配置）；与其他项目隔离，勿混。
 
 ---
 
@@ -135,11 +135,12 @@ rviz2
 
 | 项 | 值 |
 |----|----|
-| Jetson 大脑 | `nvidia@192.168.1.48` |
+| Jetson 大脑 | `nvidia@192.168.31.91`（WiFi 静态） |
+| Jetson WiFi 辅助 IP | `192.168.1.100/24`（Mid-360 雷达通信） |
 | UpBoard 小脑 | `10.0.0.6:3333`（TCP） |
 | LCM 组播 | `udpm://239.255.76.67:7667` |
-| Mid-360 雷达默认 IP | `192.168.1.12` |
-| Mid-360 host 配置 IP | `192.168.1.50`（见 mid360_config.json） |
+| Mid-360 雷达 IP | `192.168.1.195`（见 mid360_config.json） |
+| Mid-360 host 配置 IP | `192.168.1.100`（见 mid360_config.json） |
 | 相机点云 topic | `/camera/depth/color/points` |
 | 雷达点云 topic | `/livox/lidar` |
 | 雷达 IMU topic | `/livox/imu` |
@@ -153,11 +154,12 @@ rviz2
 
 ## 5. 已知阻塞项 / 注意事项
 
-1. **Mid-360 网口网段冲突**（未解决）
-   - 当前 `enP8p1s0` = `10.0.0.48/24`（连 UpBoard 的网段）
-   - 但 `mid360_config.json` 里 host 要求 `192.168.1.50`，雷达默认 `192.168.1.12`
-   - 两个网段不一致 → 需确认 Mid-360 接哪个网口、是否需配双 IP 或改配置
-   - 症状：启动 mid360 报 `bind failed` / `Failed to init livox lidar sdk`
+1. **Mid-360 网段配置**（已解决）
+   - WiFi 主 IP: `192.168.31.91/24`（上网）
+   - WiFi 辅助 IP: `192.168.1.100/24`（雷达通信，nmcli 已配置）
+   - 雷达 IP: `192.168.1.195`，host_ip: `192.168.1.100`（见 mid360_config.json）
+   - 症状：若辅助 IP 丢失，启动 mid360 报 `bind failed` / `Failed to init livox lidar sdk`
+   - 修复: `sudo nmcli connection modify Xiaomi_A389 +ipv4.addresses 192.168.1.100/24 && sudo nmcli connection up Xiaomi_A389`
 
 2. **地图文件缺失**（导航模式前置）
    - 导航需要 `dog_brain/maps/lab_3d_map.pcd`（由建图模式生成后保存）
@@ -167,7 +169,7 @@ rviz2
    - 红外流(Infra1/2)已关闭；若未来需开启，必须设 `depth_module.infra_profile: '640x480x30'` 与 `depth_profile` 一致，否则触发 v4l2 Frames Timeout
 
 4. **ROS_DOMAIN_ID 隔离**
-   - 机械狗默认域 0，小车1 项目用域 1，注意区分
+   - 机械狗默认域 11（~/.bashrc 中配置），与其他项目隔离
 
 5. **Nav2 全链路联调未做**
    - 点云 → 代价地图 voxel_layer 的完整链路需等雷达就位后实测
