@@ -135,6 +135,7 @@ install(PROGRAMS
   scripts/pcd_to_map_node.py
   scripts/elevation_map_node.py
   scripts/step_detector_node.py
+  scripts/export_2d_map.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

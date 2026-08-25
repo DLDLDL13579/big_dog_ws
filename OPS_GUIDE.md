@@ -19,7 +19,8 @@
 9. [远程可视化 (RViz)](#9-远程可视化-rviz)
 10. [UpBoard 端操作](#10-upboard-端操作)
 11. [安全红线](#11-安全红线)
-12. [速查表](#12-速查表)
+12. [多机协同与地图共享](#12-多机协同与地图共享)
+13. [速查表](#13-速查表)
 
 ---
 
@@ -472,9 +473,105 @@ cd /home/xjzx/robot-software
 
 ---
 
-## 12. 速查表
+## 12. 多机协同与地图共享
 
-### 12.1 IP / 端口 / Topic
+### 12.1 系统架构
+
+| 车辆 | IP | Domain | 定位方式 | 地图格式 |
+|------|-----|--------|---------|----------|
+| 主车 | 192.168.31.43 | 1 | RTAB-Map ICP (`Reg/Strategy=1`) | `my_room.db` + `my_map.yaml/pgm` |
+| robot1 小车 | (独立设备) | 11 | 未知 (推测 AMCL) | 2D 栅格 |
+| 机械狗 (robot2) | 192.168.31.91 | 11 | FAST-LIO2 + ICP | 3D PCD + 2D 栅格 |
+
+**通信架构：**
+```
+主车 (Domain 1) ← domain_bridge → robot1/robot2 (Domain 11)
+```
+
+桥接的 6 个话题 (每车):
+- `/robot_N/soldier_pose` (11→1): 位姿上报
+- `/robot_N/odom` (11→1): 里程计上报  
+- `/robot_N/battery_state` (11→1): 电池状态
+- `/robot_N/cmd_vel` (1→11): 速度控制下行
+- `/robot_N/goal_pose` (1→11): 导航目标下行
+- `/robot_N/initialpose` (1→11): 初始位姿下行
+
+### 12.2 地图共享方案
+
+**策略：机械狗建图 → 多格式导出 → 三车共用**
+
+```
+机械狗 Mid-360 建图 (精度最高)
+  │
+  ├─ 3D PCD → 机械狗自己用 (ICP 定位)
+  │
+  └─ 2D OccupancyGrid (export_2d_map.py 导出)
+       ├─ 主车用: my_map.yaml/pgm (Nav2 导航)
+       ├─ robot1 用: 2D 地图 (AMCL 定位)
+       └─ 主车 .db: 同一原点重建 (RTAB-Map 定位)
+```
+
+**关键：所有车从同一物理原点出发建图，坐标系自动对齐。**
+
+### 12.3 地图导出工具
+
+```bash
+# 基本用法: 从默认路径读取，输出到 ~/dog_ws/maps/
+python3 ~/dog_ws/src/fast_lio_localization/scripts/export_2d_map.py
+
+# 指定输入输出，命名为主车的 my_map
+python3 ~/dog_ws/src/fast_lio_localization/scripts/export_2d_map.py \
+  --pcd ~/dog_ws/src/dog_brain/maps/lab_3d_map.pcd \
+  --output ~/dog_ws/maps --name my_map
+
+# 直接推送到主车地图目录 (自动 SCP)
+python3 ~/dog_ws/src/fast_lio_localization/scripts/export_2d_map.py \
+  --pcd map.pcd --push-to-main
+```
+
+**主车地图路径：**
+```
+~/wheeltec_ros2/src/wheeltec_robot_rtab/my_map.yaml
+~/wheeltec_ros2/src/wheeltec_robot_rtab/my_map.pgm
+~/wheeltec_ros2/src/wheeltec_robot_rtab/my_room.db
+```
+
+### 12.4 多机协同服务管理
+
+**机械狗端 (192.168.31.91)：**
+```bash
+systemctl --user status robot2-soldier.service
+systemctl --user restart robot2-soldier.service
+```
+
+**主车端 (192.168.31.43)：**
+```bash
+systemctl --user status robot2-domain-bridge.service
+systemctl --user restart robot2-domain-bridge.service
+```
+
+### 12.5 主车包使用状态
+
+**正在使用：**
+- `largemodel` — 大模型服务 (model_service, action_service)
+- `mqtt_bridge_ros2` — MQTT 桥 (system_manager + webrtc + web_console)
+- `turn_on_wheeltec_robot` — 底盘驱动 + 传感器
+- `wheeltec_lidar_ros2` — lslidar 激光雷达
+- `wheeltec_robot_rtab` — RTAB-Map + Nav2 导航
+- `navigation2-humble` — Nav2 核心
+- `domain_bridge` — 多车桥接
+
+**未使用/备用：**
+- `wheeltec_robot_nav2` — 旧版导航 (WHEELTEC.yaml)
+- `wheeltec_multi` — 旧版多车方案
+- `wheeltec_robot_slam` — 旧版 SLAM
+- 其他: aruco, auto_recharge, ollama, tts, usb_cam 等
+
+---
+
+## 13. 速查表
+
+### 13.1 IP / 端口 / Topic
 
 | 项 | 值 |
 |----|----|
@@ -496,7 +593,7 @@ cd /home/xjzx/robot-software
 | `/map_to_odom` | ICP 定位结果 (1Hz) |
 | `/joint_states` | 16 关节状态 (500Hz) |
 
-### 12.2 常用命令
+### 13.2 常用命令
 
 ```bash
 # 环境
@@ -530,7 +627,7 @@ ping -c 2 10.0.0.6                           # UpBoard
 nmcli connection show                        # 连接状态
 ```
 
-### 12.3 文件位置
+### 13.3 文件位置
 
 | 文件 | 路径 |
 |------|------|
