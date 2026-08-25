@@ -477,11 +477,11 @@ cd /home/xjzx/robot-software
 
 ### 12.1 系统架构
 
-| 车辆 | IP | Domain | 定位方式 | 地图格式 |
-|------|-----|--------|---------|----------|
-| 主车 | 192.168.31.43 | 1 | RTAB-Map ICP (`Reg/Strategy=1`) | `my_room.db` + `my_map.yaml/pgm` |
-| robot1 小车 | (独立设备) | 11 | 未知 (推测 AMCL) | 2D 栅格 |
-| 机械狗 (robot2) | 192.168.31.91 | 11 | FAST-LIO2 + ICP | 3D PCD + 2D 栅格 |
+| 车辆 | IP | Domain | 定位方式 | 地图格式 | 地图路径 |
+|------|-----|--------|---------|----------|----------|
+| 主车 | 192.168.31.43 (nvidia) | 1 | RTAB-Map ICP (`Reg/Strategy=1`) | `my_room.db` + `my_map.yaml/pgm` | `~/wheeltec_ros2/src/wheeltec_robot_rtab/` |
+| robot1 小车 | 192.168.31.47 (sunrise) | 11 | AMCL | 2D 栅格 | `~/robot1_ws/src/robot1_nav/maps/` |
+| 机械狗 (robot2) | 192.168.31.91 (nvidia) | 11 | FAST-LIO2 + ICP | 3D PCD + 2D 栅格 | `~/dog_ws/maps/` |
 
 **通信架构：**
 ```
@@ -527,13 +527,21 @@ python3 ~/dog_ws/src/fast_lio_localization/scripts/export_2d_map.py \
 # 直接推送到主车地图目录 (自动 SCP)
 python3 ~/dog_ws/src/fast_lio_localization/scripts/export_2d_map.py \
   --pcd map.pcd --push-to-main
+
+# 推送到 robot1 地图目录 (命名需为 lab_map)
+python3 ~/dog_ws/src/fast_lio_localization/scripts/export_2d_map.py \
+  --pcd map.pcd --name lab_map --push-to-robot1
+
+# 推送到所有车辆 (主车 + robot1)
+python3 ~/dog_ws/src/fast_lio_localization/scripts/export_2d_map.py \
+  --pcd map.pcd --push-to-all
 ```
 
-**主车地图路径：**
+**三车地图路径：**
 ```
-~/wheeltec_ros2/src/wheeltec_robot_rtab/my_map.yaml
-~/wheeltec_ros2/src/wheeltec_robot_rtab/my_map.pgm
-~/wheeltec_ros2/src/wheeltec_robot_rtab/my_room.db
+主车:   ~/wheeltec_ros2/src/wheeltec_robot_rtab/my_map.yaml + my_map.pgm
+robot1: ~/robot1_ws/src/robot1_nav/maps/lab_map.yaml + lab_map.pgm
+机械狗: ~/dog_ws/maps/ (本地导出)
 ```
 
 ### 12.4 多机协同服务管理

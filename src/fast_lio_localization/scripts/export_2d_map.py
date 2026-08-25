@@ -6,11 +6,12 @@ export_2d_map.py — 将 FAST-LIO 建的 3D PCD 导出为 2D OccupancyGrid 文�
   1. 读取 3D PCD 点云
   2. 投影为 2D 栅格 (与 pcd_to_map_node.py 逻辑一致)
   3. 保存为 .pgm + .yaml (Nav2 map_server 格式)
-  4. 可直接输出到主车导航地图目录
+  4. 可直接输出到主车/robot1 导航地图目录
 
-主车地图路径:
-  - RTAB-Map: ~/wheeltec_ros2/src/wheeltec_robot_rtab/my_map.pgm + my_map.yaml
-  - Nav2:     ~/wheeltec_ros2/src/wheeltec_robot_nav2/map/WHEELTEC.pgm + WHEELTEC.yaml
+三车地图路径:
+  - 主车:   ~/wheeltec_ros2/src/wheeltec_robot_rtab/my_map.pgm + my_map.yaml
+  - robot1: ~/robot1_ws/src/robot1_nav/maps/lab_map.pgm + lab_map.yaml
+  - 机械狗: ~/dog_ws/maps/ (本地导出)
 
 用法:
   # 基本用法: 从默认路径读取，输出到 ~/dog_ws/maps/
@@ -19,11 +20,14 @@ export_2d_map.py — 将 FAST-LIO 建的 3D PCD 导出为 2D OccupancyGrid 文�
   # 指定输入和输出，命名为主车的 my_map
   python3 export_2d_map.py --pcd /path/to/map.pcd --output ~/dog_ws/maps --name my_map
 
-  # 直接推送到主车地图目录 (自动 SCP 到 wheeltec_robot_rtab)
+  # 直接推送到主车地图目录 (自动 SCP)
   python3 export_2d_map.py --pcd map.pcd --push-to-main
 
-  # 推送到主车 Nav2 目录 (WHEELTEC.yaml)
-  python3 export_2d_map.py --pcd map.pcd --name WHEELTEC --push-to-main
+  # 推送到 robot1 地图目录 (命名需为 lab_map)
+  python3 export_2d_map.py --pcd map.pcd --name lab_map --push-to-robot1
+
+  # 推送到所有车辆 (主车 + robot1)
+  python3 export_2d_map.py --pcd map.pcd --name my_map --push-to-all
 
   # 同时发布到 /map 话题
   python3 export_2d_map.py --pcd map.pcd --publish
@@ -155,29 +159,29 @@ def publish_to_ros(map_info, frame_id='map'):
         return False
 
 
-def push_to_main_vehicle(yaml_path, pgm_path, main_vehicle_path):
-    """通过 SSH 推送地图到主车"""
+def push_to_vehicle(yaml_path, pgm_path, vehicle_ip, vehicle_password, remote_path, vehicle_name):
+    """通过 SSH 推送地图到指定车辆"""
     import subprocess
     import os
 
     yaml_name = os.path.basename(yaml_path)
     pgm_name = os.path.basename(pgm_path)
 
-    print(f"\n推送地图到主车 {main_vehicle_path} ...")
+    print(f"\n推送地图到 {vehicle_name} ({vehicle_ip}) {remote_path} ...")
 
     # 推送 YAML
-    cmd = f"sshpass -p 'nvidia' scp -o StrictHostKeyChecking=no {yaml_path} nvidia@192.168.31.43:{main_vehicle_path}/{yaml_name}"
+    cmd = f"sshpass -p '{vehicle_password}' scp -o StrictHostKeyChecking=no {yaml_path} sunrise@{vehicle_ip}:{remote_path}/{yaml_name}" if 'sunrise' in remote_path else f"sshpass -p '{vehicle_password}' scp -o StrictHostKeyChecking=no {yaml_path} nvidia@{vehicle_ip}:{remote_path}/{yaml_name}"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     if result.returncode == 0:
-        print(f"  ✓ {yaml_name} → {main_vehicle_path}")
+        print(f"  ✓ {yaml_name} → {remote_path}")
     else:
         print(f"  ✗ Failed to push {yaml_name}: {result.stderr}")
 
     # 推送 PGM
-    cmd = f"sshpass -p 'nvidia' scp -o StrictHostKeyChecking=no {pgm_path} nvidia@192.168.31.43:{main_vehicle_path}/{pgm_name}"
+    cmd = f"sshpass -p '{vehicle_password}' scp -o StrictHostKeyChecking=no {pgm_path} sunrise@{vehicle_ip}:{remote_path}/{pgm_name}" if 'sunrise' in remote_path else f"sshpass -p '{vehicle_password}' scp -o StrictHostKeyChecking=no {pgm_path} nvidia@{vehicle_ip}:{remote_path}/{pgm_name}"
     result = subprocess.run(cmd, shell=True, capture_output=True, text=True)
     if result.returncode == 0:
-        print(f"  ✓ {pgm_name} → {main_vehicle_path}")
+        print(f"  ✓ {pgm_name} → {remote_path}")
     else:
         print(f"  ✗ Failed to push {pgm_name}: {result.stderr}")
 
@@ -202,10 +206,14 @@ def main():
                         help='Also publish to /map topic')
     parser.add_argument('--push-to-main', action='store_true',
                         help='Push map to main vehicle via SSH')
+    parser.add_argument('--push-to-robot1', action='store_true',
+                        help='Push map to robot1 via SSH')
+    parser.add_argument('--push-to-all', action='store_true',
+                        help='Push map to both main vehicle and robot1')
     parser.add_argument('--main-path', type=str, default='/home/nvidia/wheeltec_ros2/src/wheeltec_robot_rtab',
                         help='Main vehicle map directory (default: wheeltec_robot_rtab)')
-    parser.add_argument('--main-path-nav2', type=str, default='/home/nvidia/wheeltec_ros2/src/wheeltec_robot_nav2/map',
-                        help='Main vehicle Nav2 map directory (for WHEELTEC.yaml)')
+    parser.add_argument('--robot1-path', type=str, default='/home/sunrise/robot1_ws/src/robot1_nav/maps',
+                        help='Robot1 map directory')
 
     args = parser.parse_args()
 
@@ -241,11 +249,16 @@ def main():
         publish_to_ros(map_info)
 
     # 可选: 推送到主车
-    if args.push_to_main:
-        push_to_main_vehicle(yaml_path, pgm_path, args.main_path)
+    if args.push_to_main or args.push_to_all:
+        push_to_vehicle(yaml_path, pgm_path, '192.168.31.43', 'nvidia', args.main_path, '主车')
         # 如果名字是 WHEELTEC，也推送到 Nav2 目录
         if args.name == 'WHEELTEC':
-            push_to_main_vehicle(yaml_path, pgm_path, args.main_path_nav2)
+            push_to_vehicle(yaml_path, pgm_path, '192.168.31.43', 'nvidia',
+                          '/home/nvidia/wheeltec_ros2/src/wheeltec_robot_nav2/map', '主车 Nav2')
+
+    # 可选: 推送到 robot1
+    if args.push_to_robot1 or args.push_to_all:
+        push_to_vehicle(yaml_path, pgm_path, '192.168.31.47', 'sunrise', args.robot1_path, 'robot1')
 
     print("\n完成!")
 
