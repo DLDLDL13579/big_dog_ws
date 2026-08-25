@@ -43,7 +43,7 @@ source /home/nvidia/dog_ws/install/setup.bash
 | 检查项 | 命令 | 预期 |
 |--------|------|------|
 | WiFi 主 IP | `ip addr show wlP1p1s0` | `192.168.31.91/24` |
-| WiFi 辅助 IP | `ip addr show wlP1p1s0` | `192.168.1.100/24` |
+| USB 网卡(雷达直连) | `ip addr show enx00e04c680779` | `192.168.1.100/32` |
 | 有线网口 | `ip addr show enP8p1s0` | `10.0.0.48/24` |
 | 雷达可达 | `ping -c 2 192.168.1.195` | 通 |
 | UpBoard 可达 | `ping -c 2 10.0.0.6` | 通 |
@@ -61,17 +61,20 @@ source /home/nvidia/dog_ws/install/setup.bash
                     │   Jetson Orin NX (大脑)       │
                     │                               │
   WiFi 路由器 ──────┤  wlP1p1s0: 192.168.31.91/24  │
-  (192.168.31.x)    │           + 192.168.1.100/24  │──── Mid-360 雷达
-                    │                 (辅助 IP)      │     (192.168.1.195)
+  (192.168.31.x)    │                               │
+                    │  enx00e04c680779 ─────────────┼──── Mid-360 雷达
+                    │  (USB 网卡) 192.168.1.100/32  │     (192.168.1.195)
                     │                               │
                     │  enP8p1s0: 10.0.0.48/24  ─────┼──── UpBoard 小脑
                     │                               │     (10.0.0.6)
                     └─────────────────────────────┘
 ```
 
+> ⚠️ **2026-08-25 变更：** 雷达改走 USB 网卡直连，WiFi 不再配 192.168.1.100 辅助 IP（之前双 IP 冲突导致点云链路建不起来）。
+
 ### 2.2 WiFi 静态 IP 配置
 
-已用 nmcli 持久化，重启自动生效：
+已用 nmcli 持久化，重启自动生效（**仅主 IP，无辅助 IP**）：
 
 ```bash
 # 查看当前配置
@@ -80,21 +83,28 @@ nmcli -t -f ipv4.addresses,ipv4.method connection show Xiaomi_A389
 # 若需重新设置（一般不需要）
 sudo nmcli connection modify Xiaomi_A389 \
   ipv4.method manual \
-  ipv4.addresses "192.168.31.91/24, 192.168.1.100/24" \
+  ipv4.addresses "192.168.31.91/24" \
   ipv4.gateway 192.168.31.1 \
   ipv4.dns "192.168.31.1,8.8.8.8"
 sudo nmcli connection up Xiaomi_A389
 ```
 
-### 2.3 辅助 IP 丢失修复
+### 2.3 USB 网卡配置（雷达直连）
 
-**症状**：启动 mid360 报 `bind failed` / `Failed to init livox lidar sdk`
+雷达通过 USB 网卡 `enx00e04c680779` 直连，IP 192.168.1.100/32：
 
-**修复**：
 ```bash
-sudo nmcli connection modify Xiaomi_A389 +ipv4.addresses 192.168.1.100/24
-sudo nmcli connection up Xiaomi_A389
+# 查看状态
+ip addr show enx00e04c680779
+
+# 若需重新配置（一般不需要，nmcli 已持久化）
+sudo nmcli connection modify enx00e04c680779 \
+  ipv4.method manual \
+  ipv4.addresses "192.168.1.100/32"
+sudo nmcli connection up enx00e04c680779
 ```
+
+> ⚠️ **教训：** 若 WiFi 同时配 192.168.1.100/24 辅助 IP，会与 USB 网卡冲突，驱动握手成功但无点云。修复：移除 WiFi 辅助 IP。
 
 ### 2.4 LCM 组播绑定
 
@@ -119,6 +129,14 @@ bash /home/nvidia/restart_stack.sh
 source /opt/ros/humble/setup.bash
 source /home/nvidia/dog_ws/install/setup.bash
 ros2 launch dog_brain bringup_launch.py mode:=mapping
+```
+
+**省电模式（关闭 D435i 相机）：**
+```bash
+# 建图只需雷达+IMU，可关闭相机降功耗（防断电）
+sudo systemctl start dog-brain  # 服务已配置 enable_camera:=false
+# 或手动启动时传参
+ros2 launch dog_brain bringup_launch.py mode:=mapping enable_camera:=false
 ```
 
 ### 3.2 建图操作步骤
@@ -193,6 +211,8 @@ ros2 launch dog_brain bringup_launch.py mode:=navigation
 ### 4.4 导航注意事项
 
 - **不要用 sudo 启动**（root 身份下 Python 找不到 tf_transformations）
+- **注意 conda 环境干扰**：`~/.bashrc` 中 `conda init` 会把 `python3` 指向 miniconda（缺 numpy/tf_transformations），导致定位四件套（global_map_publisher / pcd_to_map / elevation_map / step_detector / global_localization）全部崩溃，症状是 `/localization` 无数据、map→base_link TF 缺失。`nav_restart.sh` 已内置 PATH 剔除 conda 的修复；手动启动导航前需先 `conda deactivate`
+- **体素层 z 窗口过窄（已知问题）**：当前配置 -0.2~1.4m，趴下时雷达传感器在 odom 系 z 约 -2m，超出窗口导致点云被丢弃、避障失明。需按机器人全姿态范围（最低到最高）配置 z 窗口
 - 每次重拉栈后必须重新给 initialpose
 - 遥控器 SWF 通道(ch10) = 导航档，1800μs
 
@@ -221,7 +241,7 @@ journalctl -u dog-brain -n 60         # 最近 60 行
 ```
 
 **服务配置**（`/etc/systemd/system/dog-brain.service`）：
-- 用户: nvidia
+- 用户: nvidia，环境变量: `ROS_DOMAIN_ID=11`（2026-08-25 补上，之前缺失导致建图栈跑在默认 0 域）
 - 模式: mapping（建图）
 - ExecStartPre: sleep 12（等网络/雷达就绪）
 - Restart: on-failure（崩溃自动重启，间隔 8s）
@@ -275,9 +295,12 @@ bash /home/nvidia/restart_stack.sh
 | 故障 | 症状 | 处置 |
 |------|------|------|
 | **雷达冷启动卡死** | LED 亮、ping 通、驱动 init success，但点数=0 | `sudo systemctl restart dog-brain` + 静止 60s |
+| **雷达数据链路冻结** | 握手成功（mode Normal）但无点云，多次崩溃后出现 | **雷达断电 10s 再上电**，然后重启栈 |
 | **失同步** | FAST-LIO 狂刷 `not Synced` + `No Effective`，位姿发散 | 先 `/map_save`（建图中），再 restart |
 | **ICP 定位丢失** | fitness=0.000，`Robot is out of bounds` | 重新给 initialpose |
-| **雷达辅助 IP 丢失** | mid360 报 `bind failed` | 重配辅助 IP（见 §2.3） |
+| **USB 网卡 IP 丢失** | mid360 报 `bind failed` | 重配 USB 网卡 IP（见 §2.3） |
+| **WiFi/USB 网卡 IP 冲突** | 驱动握手成功但无点云 | 移除 WiFi 辅助 IP，仅保留 USB 网卡 192.168.1.100 |
+| **体素层避障失明** | costmap 报 `Sensor origin ... is out of map bounds` | 检查雷达 z 是否超出体素层窗口（趴下时易触发） |
 | **DDS 抽风** | ros2 topic echo/hz 空返回 | 重试 2-3 次 |
 | **相机断流** | local_costmap 报 camera buffer 延迟 | 检查 transform_tolerance 是否 2.0 |
 | **/global_map 读到 0 点** | ICP 启动但 fitness=0 | 检查 install 路径 symlink |
@@ -584,8 +607,8 @@ systemctl --user restart robot2-domain-bridge.service
 | 项 | 值 |
 |----|----|
 | Jetson SSH | `nvidia@192.168.31.91` |
-| Jetson WiFi 主 IP | `192.168.31.91/24` |
-| Jetson WiFi 辅助 IP | `192.168.1.100/24` |
+| Jetson WiFi IP | `192.168.31.91/24` |
+| Jetson USB 网卡 | `enx00e04c680779` → `192.168.1.100/32`（雷达直连） |
 | UpBoard | `10.0.0.6` (TCP :3333) |
 | Mid-360 雷达 | `192.168.1.195` |
 | LCM 组播 | `udpm://239.255.76.67:7667` |

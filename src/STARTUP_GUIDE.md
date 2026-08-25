@@ -2,7 +2,7 @@
 
 > 适用设备：Jetson Orin NX `nvidia@192.168.31.91`（ARM64 / Ubuntu 22.04 / ROS Humble）
 > 工作空间：`/home/nvidia/dog_ws`（**单工作空间，所有包含雷达驱动已合并**）
-> 最后更新：2026-08-13（定位架构已切换为 ICP 3D 全局定位）
+> 最后更新：2026-08-25（网络拓扑变更：雷达改走 USB 网卡直连）
 
 ---
 
@@ -136,7 +136,7 @@ rviz2
 | 项 | 值 |
 |----|----|
 | Jetson 大脑 | `nvidia@192.168.31.91`（WiFi 静态） |
-| Jetson WiFi 辅助 IP | `192.168.1.100/24`（Mid-360 雷达通信） |
+| Jetson USB 网卡 | `enx00e04c680779` → `192.168.1.100/32`（Mid-360 雷达直连，**勿给 WiFi 加 192.168.1.100 辅助 IP，会冲突**） |
 | UpBoard 小脑 | `10.0.0.6:3333`（TCP） |
 | LCM 组播 | `udpm://239.255.76.67:7667` |
 | Mid-360 雷达 IP | `192.168.1.195`（见 mid360_config.json） |
@@ -154,12 +154,13 @@ rviz2
 
 ## 5. 已知阻塞项 / 注意事项
 
-1. **Mid-360 网段配置**（已解决）
+1. **Mid-360 网段配置**（已解决，2026-08-25 更新）
    - WiFi 主 IP: `192.168.31.91/24`（上网）
-   - WiFi 辅助 IP: `192.168.1.100/24`（雷达通信，nmcli 已配置）
+   - **雷达接在 USB 网卡 `enx00e04c680779`（192.168.1.100/32）直连**，不再走 WiFi 辅助 IP
    - 雷达 IP: `192.168.1.195`，host_ip: `192.168.1.100`（见 mid360_config.json）
-   - 症状：若辅助 IP 丢失，启动 mid360 报 `bind failed` / `Failed to init livox lidar sdk`
-   - 修复: `sudo nmcli connection modify Xiaomi_A389 +ipv4.addresses 192.168.1.100/24 && sudo nmcli connection up Xiaomi_A389`
+   - ⚠️ 教训：若 WiFi 与 USB 网卡同时配 192.168.1.100（IP 冲突），驱动能发现雷达但数据链路建不起来（卡在 GetFreeIndex，无点云）。修复：`sudo nmcli connection modify Xiaomi_A389 ipv4.addresses 192.168.31.91/24 && sudo nmcli connection up Xiaomi_A389`
+   - 症状：若雷达链路不通，启动 mid360 报 `bind failed` / `Failed to init livox lidar sdk`，或日志只有 GetFreeIndex 无后续
+   - **雷达数据链路冻结**：多次崩溃/重启后雷达握手成功但无点云，需**断电 10s 再上电**
 
 2. **地图文件缺失**（导航模式前置）
    - 导航需要 `dog_brain/maps/lab_3d_map.pcd`（由建图模式生成后保存）
@@ -167,12 +168,22 @@ rviz2
 3. **D435i 相机**
    - 必须插 USB 3.0 数据线（否则降到 USB 2.1，点云只有 14 Hz）
    - 红外流(Infra1/2)已关闭；若未来需开启，必须设 `depth_module.infra_profile: '640x480x30'` 与 `depth_profile` 一致，否则触发 v4l2 Frames Timeout
+   - 建图时可关闭相机降功耗：`ros2 launch dog_brain bringup_launch.py mode:=mapping enable_camera:=false`
 
 4. **ROS_DOMAIN_ID 隔离**
    - 机械狗默认域 11（~/.bashrc 中配置），与其他项目隔离
+   - systemd 服务需显式配置 `Environment=ROS_DOMAIN_ID=11`（服务不读 .bashrc）
 
-5. **Nav2 全链路联调未做**
-   - 点云 → 代价地图 voxel_layer 的完整链路需等雷达就位后实测
+5. **conda 环境劫持**（2026-08-25 新增）
+   - `~/.bashrc` 中 `conda init` 使交互终端 `python3` 指向 miniconda（缺 numpy/tf_transformations）
+   - 症状：定位四件套全部崩溃，`/localization` 无数据，map→base_link TF 缺失
+   - 修复：`nav_restart.sh` 已内置 PATH 剔除 conda 的逻辑；手动启动前需先 `conda deactivate`
+
+6. **Nav2 体素层 z 窗口过窄**（2026-08-25 新增，待修）
+   - 当前配置：origin_z=-0.2, z_resolution=0.1, z_voxels=16 → 窗口 -0.2~1.4m
+   - 趴下时雷达传感器在 odom 系 z 约 -2m，超出窗口导致点云被丢弃、避障失明
+   - costmap 日志持续报 `Sensor origin ... is out of map bounds`
+   - 修复方向：按机器人全姿态范围（最低到最高）配置 z 窗口，并留余量
 
 ---
 
