@@ -20,12 +20,18 @@ def generate_launch_description():
         default_value='mapping',
         description='运行模式: mapping | navigation')
 
+    enable_camera_arg = DeclareLaunchArgument(
+        'enable_camera',
+        default_value='true',
+        description='是否启动 D435i 相机（建图省电实验可设 false）')
+
     mapping_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([
                 FindPackageShare('dog_brain'), 'launch', 'mapping_launch.py'
             ])
         ),
+        launch_arguments={'enable_camera': LaunchConfiguration('enable_camera')}.items(),
         condition=IfCondition(
             PythonExpression(['"', LaunchConfiguration('mode'), '" == "mapping"'])
         ),
@@ -44,6 +50,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         mode_arg,
+        enable_camera_arg,
         mapping_launch,
         navigation_launch,
     ])

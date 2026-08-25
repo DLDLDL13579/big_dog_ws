@@ -26,13 +26,18 @@ def generate_launch_description():
     use_sim_time_arg = DeclareLaunchArgument(
         'use_sim_time', default_value='false')
 
+    enable_camera_arg = DeclareLaunchArgument(
+        'enable_camera', default_value='true',
+        description='是否启动 D435i 相机（建图不需要，可关闭降功耗）')
+
     # ── Sensors ─────────────────────────────────────────────────
     sensors_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             PathJoinSubstitution([
                 FindPackageShare('dog_sensors'), 'launch', 'all_sensors_launch.py'
             ])
-        )
+        ),
+        launch_arguments={'enable_camera': LaunchConfiguration('enable_camera')}.items(),
     )
 
     # ── Robot Description ───────────────────────────────────────
@@ -76,6 +81,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         use_sim_time_arg,
+        enable_camera_arg,
         sensors_launch,
         robot_state_pub,
         lcm_bridge,
