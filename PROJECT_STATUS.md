@@ -207,7 +207,7 @@ ec8b1d5 fix: 修复导航启动 URDF/桥接配置 + 相机图像 180° 倒置
 | 3 | ~~导航参数稳定性验证~~ | ✅ 已完成（2026-08-24 降速/防倒车/目标检查/容差调优） |
 | 4 | 导航常驻 systemd | 类似 dog-brain.service 的导航模式自启动 |
 | 5 | 全向横移扩展 | Nav2 差分(vy=0) + TCP 无 vy 槽位 → 需 Nav2 全向 + TCP 加第4个 double |
-| 6 | ~~step_detector 现场标定~~ | ✅ 已完成（CPU 264%→57%，降频 10Hz，OPENBLAS 优化） |
+| 6 | ~~step_detector 现场标定~~ | ✅ 已完成（阈值 0.079m，CPU 264%→57%，降频 10Hz，OPENBLAS 优化） |
 
 ### 🟢 P2 — 优化项
 | # | 项目 | 说明 |
@@ -254,5 +254,5 @@ ec8b1d5 fix: 修复导航启动 URDF/桥接配置 + 相机图像 180° 倒置
 
 ## 14. 当前最紧迫的事
 
-> **P0 已全部完成。** TCP 注入已部署，navigate_to_pose 端到端已验证，导航参数已调优，step_detector 已优化。  
+> **P0 已全部完成。** TCP 注入已部署，navigate_to_pose 端到端已验证，导航参数已调优，step_detector 已标定（阈值 0.079m）。  
 > 下一步：导航 systemd 服务 + 全向横移扩展 + 楼梯间专项（远期）。

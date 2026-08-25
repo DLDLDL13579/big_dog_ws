@@ -60,7 +60,7 @@
 | ✅ 5.2 | 3D Voxel Layer 代价地图 | 2026-08-18 | Livox + D435i 双层 voxel |
 | ✅ 5.3 | pcd_to_map 节点 | 2026-08-18 | 3D PCD → 2D /map (static_layer) |
 | ✅ 5.4 | elevation_map 节点 | 2026-08-18 | 2.5D 高程图，分级越障 |
-| ✅ 5.5 | step_detector 节点 | 2026-08-18 | D435i 台阶检测，CPU 优化 264%→57% |
+| ✅ 5.5 | step_detector 节点 | 2026-08-18 | D435i 台阶检测，CPU 优化 264%→57%，阈值 0.079m |
 | ✅ 5.6 | 降速防飘移 | 2026-08-24 | max_vel_x 0.75→0.45, max_vel_theta 0.8→0.35 |
 | ✅ 5.7 | 防倒车 | 2026-08-24 | PreferForward.scale 1.0→10.0 |
 | ✅ 5.8 | 目标检查器修复 | 2026-08-24 | stateful=true（先到位再对向） |
@@ -146,7 +146,7 @@
 │   ✅ TCP 注入已部署到 UpBoard                                     │
 │   ✅ navigate_to_pose 端到端已验证 (nav_goal_test.py)              │
 │   ✅ 导航参数已调优 (降速/防倒车/目标检查/容差)                      │
-│   ✅ step_detector 已优化 (CPU 264%→57%, 降频 10Hz)               │
+│   ✅ step_detector 已标定 (阈值 0.079m, CPU 264%→57%, 降频 10Hz)       │
 │                                                                  │
 │   下一步:                                                        │
 │   1. 建 dog-nav.service 导航模式开机自启                            │
