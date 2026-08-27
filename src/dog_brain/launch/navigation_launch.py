@@ -101,21 +101,23 @@ def generate_launch_description():
     )
 
     # 2c. PCD -> 2.5D 高程图 (/elevation_costmap, 越障/模态切换依据)
-    elevation_map = Node(
-        package='fast_lio_localization',
-        executable='elevation_map_node.py',
-        name='elevation_map',
-        output='screen',
-        parameters=[{'pcd_path': LaunchConfiguration('map_pcd')}]
-    )
+    # ★ 2026-08-27 暂时禁用: CPU ~57% 过高, 基本避障不需要
+    # elevation_map = Node(
+    #     package='fast_lio_localization',
+    #     executable='elevation_map_node.py',
+    #     name='elevation_map',
+    #     output='screen',
+    #     parameters=[{'pcd_path': LaunchConfiguration('map_pcd')}]
+    # )
 
     # 2d. 实时前方台阶检测 (D435i 近距, 供轮腿模态切换) [实验性,待现场标定]
-    step_detector = Node(
-        package='fast_lio_localization',
-        executable='step_detector_node.py',
-        name='step_detector',
-        output='screen',
-    )
+    # ★ 2026-08-27 暂时禁用: CPU 56.9% 过高, 导致控制循环跑不满 10Hz
+    # step_detector = Node(
+    #     package='fast_lio_localization',
+    #     executable='step_detector_node.py',
+    #     name='step_detector',
+    #     output='screen',
+    # )
 
     # 3. 全局定位 (ICP 匹配 → /map_to_odom)
     global_loc = Node(
@@ -165,8 +167,8 @@ def generate_launch_description():
         fast_lio2,
         global_map_pub,
         pcd_to_map,
-        elevation_map,
-        step_detector,
+        # elevation_map,  # 暂时禁用, CPU 过高
+        # step_detector,  # 暂时禁用, CPU 过高
         global_loc,
         transform_fusion,
         nav2_bringup,

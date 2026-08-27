@@ -12,6 +12,30 @@
 #   (global_map_publisher + fastlio_mapping + global_localization + transform_fusion)
 #   ⚠️ 已移除 AMCL 2D 粒子滤波定位 (scan_topic=/scan 无人发布, 3D 雷达/深度相机无 2D scan)
 #
+# ─── 调参记录 (单变量类轮次) ───
+# R1 2026-08-26: 仅 DWB critics 权重 (治"贴边/擦障"): 
+#   BaseObstacle 1.5→8.0 (加强障碍排斥), PathAlign 32→16, GoalAlign 24→12 (降贴路径强度)
+#   FAST-LIO/体素层/膨胀层未动
+# ★ R1 重大发现: Humble yaml 通配符不展平嵌套命名空间, 此前平铺写法 
+#   FollowPath.BaseObstacle.scale 从未生效, DWB 一直跑默认全 1.0 权重!
+#   已改为嵌套写法 FollowPath.dwb_critics::BaseObstacle.scale (ros2 param get 验证生效)
+# R1 实车结果(2026-08-26): 2.0m 直线目标 6s 平滑完成, 目视确认实走约 2.3m, 无停摆 ✅
+# R2 2026-08-26: 仅膨胀层 (治终点停摆/高代价区过大): inflation_radius 0.45→0.30
+#   (局部+全局代价地图同步改, cost_scaling_factor 保持 2.5 不动, 单变量隔离归因)
+# R3 2026-08-27: 体素层 z 窗口扩展 (治避障失明)
+#   origin_z -0.2→-2.0, z_resolution 0.1→0.3, z_voxels 16 → 覆盖 -2.0~2.8m
+#   站立时传感器 z≈1.85m(odom系), 旧窗口-3.0~1.8m 上界不够→raytrace 失败
+#   趴姿时传感器 z≈0.15m(odom系), -2.0 下界足够
+#   同步放宽 observation_source 的 min_obstacle_height 为 -2.0
+#   注意: VoxelGrid 硬限制 z_voxels<=16, 用 z_resolution 补偿范围
+# R4 2026-08-27: 体素层 z 窗口收紧+垂直分辨率翻倍 (基于 drift_test 实测数据定窗)
+#   origin_z -2.0→-0.75, z_resolution 0.30→0.15, z_voxels 16 → 覆盖 -0.75~1.65m
+#   跨度 2.4m / 0.15 = 16 体素, 恰好满足 VoxelGrid z_voxels<=16 硬限制
+#   同步收紧 observation_source 的 min/max_obstacle_height 为 -0.75/1.65 (局部+全局同步改)
+#   实测验证(drift_test 352s, 趴→站→遥控两圈→趴回原地, 闭环误差0.17m):
+#   净漂移 -0.042m, z 范围 [-0.118, +0.705](趴下≈-0.05, 站立≈+0.45, 峰值+0.71为步态起伏)
+#   → 下界余量 0.63m, 上界余量 0.94m, 窗口安全
+#   ★ R3 注释中"站立传感器 z≈1.85m"是旧栈 33min 失同步的病态值, 正常工况不可复现
 
 bt_navigator:
   ros__parameters:
@@ -129,12 +153,20 @@ controller_server:
         - dwb_critics::PathAlign
         - dwb_critics::PathDist
         - dwb_critics::PreferForward
-      BaseObstacle.scale: 1.5
-      GoalAlign.scale: 24.0
-      GoalDist.scale: 24.0
-      PathAlign.scale: 32.0
-      PathDist.scale: 32.0
-      PreferForward.scale: 10.0
+      # ★ Humble 嵌套命名空间写法 (平铺写法不生效, R1 实测验证):
+      dwb_critics::BaseObstacle:
+        scale: 8.0
+        sum_scores: false   # Humble 默认 true 会对全轨迹点求和, 导致轨迹动辄判死→卡住不走; false=取最差单点罚分, 避障更平滑稳定 (R2 预设)
+      dwb_critics::GoalAlign:
+        scale: 12.0
+      dwb_critics::GoalDist:
+        scale: 24.0
+      dwb_critics::PathAlign:
+        scale: 16.0
+      dwb_critics::PathDist:
+        scale: 32.0
+      dwb_critics::PreferForward:
+        scale: 10.0
 
 local_costmap:
   local_costmap:
@@ -148,32 +180,32 @@ local_costmap:
       width: 4
       height: 4
       resolution: 0.05
-      transform_tolerance: 2.0
+      transform_tolerance: 5.0
       footprint: "[[0.45,0.25],[0.45,-0.25],[-0.45,-0.25],[-0.45,0.25]]"
       footprint_padding: 0.05
       plugins: ["voxel_layer", "inflation_layer"]
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
-        inflation_radius: 0.45
+        inflation_radius: 0.30
         cost_scaling_factor: 2.5
       voxel_layer:
         plugin: nav2_costmap_2d::VoxelLayer
         enabled: true
         voxel_size: 0.05
         publish_voxel_map: true
-        origin_z: -0.20
-        z_resolution: 0.10
+        origin_z: -0.75
+        z_resolution: 0.15
         z_voxels: 16
-        max_obstacle_height: 1.4
-        min_obstacle_height: 0.0
+        max_obstacle_height: 1.65
+        min_obstacle_height: -0.75
         unknown_threshold: 15
         mark_threshold: 2
-        observation_sources: livox_scan camera_scan
+        observation_sources: livox_scan  # ★ 2026-08-27: camera_scan 禁用 (D435i 硬件故障)
         combination_method: 1
         livox_scan:
           topic: /cloud_registered_body
-          max_obstacle_height: 2.0
-          min_obstacle_height: 0.2
+          max_obstacle_height: 1.65
+          min_obstacle_height: -0.75
           obstacle_max_range: 5.0
           obstacle_min_range: 0.2
           raytrace_max_range: 5.5
@@ -182,18 +214,6 @@ local_costmap:
           marking: true
           data_type: PointCloud2
           expected_update_rate: 0.3
-        camera_scan:
-          topic: /camera/depth/color/points
-          max_obstacle_height: 2.0
-          min_obstacle_height: 0.1
-          obstacle_max_range: 3.0
-          obstacle_min_range: 0.2
-          raytrace_max_range: 3.5
-          raytrace_min_range: 0.5
-          clearing: true
-          marking: true
-          data_type: PointCloud2
-          expected_update_rate: 2.0
       static_layer:
         plugin: nav2_costmap_2d::StaticLayer
         map_subscribe_transient_local: true
@@ -208,7 +228,7 @@ global_costmap:
       robot_base_frame: base_link
       use_sim_time: false
       resolution: 0.05
-      transform_tolerance: 2.0
+      transform_tolerance: 5.0
       footprint: "[[0.45,0.25],[0.45,-0.25],[-0.45,-0.25],[-0.45,0.25]]"
       footprint_padding: 0.05
       plugins: ["static_layer", "voxel_layer", "inflation_layer"]
@@ -217,26 +237,26 @@ global_costmap:
         map_subscribe_transient_local: true
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
-        inflation_radius: 0.45
+        inflation_radius: 0.30
         cost_scaling_factor: 2.5
       voxel_layer:
         plugin: nav2_costmap_2d::VoxelLayer
         enabled: true
         voxel_size: 0.05
         publish_voxel_map: false
-        origin_z: -0.20
-        z_resolution: 0.10
+        origin_z: -0.75
+        z_resolution: 0.15
         z_voxels: 16
-        max_obstacle_height: 1.4
-        min_obstacle_height: 0.0
+        max_obstacle_height: 1.65
+        min_obstacle_height: -0.75
         unknown_threshold: 15
         mark_threshold: 2
         observation_sources: livox_scan
         combination_method: 1
         livox_scan:
           topic: /cloud_registered_body
-          max_obstacle_height: 2.0
-          min_obstacle_height: 0.2
+          max_obstacle_height: 1.65
+          min_obstacle_height: -0.75
           obstacle_max_range: 5.0
           obstacle_min_range: 0.2
           raytrace_max_range: 5.5
