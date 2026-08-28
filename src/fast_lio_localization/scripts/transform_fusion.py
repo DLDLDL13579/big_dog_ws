@@ -91,7 +91,7 @@ class TransformFusionNode(Node):
         quat2 = tf_transformations.quaternion_from_matrix(T_map_to_base)
 
         loc_msg = Odometry()
-        loc_msg.header.stamp          = odom.header.stamp
+        loc_msg.header.stamp          = self.get_clock().now().to_msg()
         loc_msg.header.frame_id       = 'map'
         loc_msg.child_frame_id        = 'base_link'
         loc_msg.pose.pose.position    = Point(x=xyz[0], y=xyz[1], z=xyz[2])

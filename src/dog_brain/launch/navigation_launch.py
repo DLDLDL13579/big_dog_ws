@@ -19,6 +19,7 @@
 
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, Command
 from launch_ros.actions import Node
@@ -34,6 +35,27 @@ def generate_launch_description():
             FindPackageShare('dog_brain'), 'maps', 'lab_3d_map.pcd'
         ]),
         description='3D PCD map file for localization')
+
+    # ── A5: 自动初始位姿 (2026-08-27) ──
+    # 修复: 此前 initialpose 完全依赖 RViz 手动点击, 忘记设置则 ICP 永不初始化
+    # (R4 验证跑 55.9min ICP 裸奔, z 漂移无人纠偏). 现在 launch 启动时自动发布.
+    # 若用户在 RViz 中手动设置了初始位姿, 自动发布节点会检测到 /map_to_odom
+    # 已有数据并跳过, 不覆盖手动设置.
+    auto_initial_pose_arg = DeclareLaunchArgument(
+        'auto_initial_pose', default_value='true',
+        description='启动时自动发布 initialpose (true/false)')
+    init_x_arg = DeclareLaunchArgument(
+        'init_x', default_value='0.0',
+        description='自动初始位姿 x (map 系)')
+    init_y_arg = DeclareLaunchArgument(
+        'init_y', default_value='0.0',
+        description='自动初始位姿 y (map 系)')
+    init_z_arg = DeclareLaunchArgument(
+        'init_z', default_value='0.0',
+        description='自动初始位姿 z (map 系, global_localization 会归零)')
+    init_yaw_arg = DeclareLaunchArgument(
+        'init_yaw', default_value='0.0',
+        description='自动初始位姿 yaw (弧度)')
 
     # ── Sensors ─────────────────────────────────────────────────
     sensors_launch = IncludeLaunchDescription(
@@ -141,6 +163,26 @@ def generate_launch_description():
         output='screen',
     )
 
+    # 5. ★ A5: 自动初始位姿发布 (等待 FAST-LIO 就绪 + 地图加载后自动发 initialpose)
+    #    - 等待 /Odometry 首帧 (FAST-LIO 启动标志)
+    #    - 再等 8s 让 global_localization 收到 /global_map
+    #    - 若 /map_to_odom 已有数据 (用户手动设过), 则跳过
+    #    - 持续发布 3s 确保 DDS 握手
+    auto_initial_pose_node = Node(
+        package='fast_lio_localization',
+        executable='publish_initial_pose.py',
+        name='auto_initial_pose',
+        output='screen',
+        arguments=[
+            '--auto',
+            '--x', LaunchConfiguration('init_x'),
+            '--y', LaunchConfiguration('init_y'),
+            '--z', LaunchConfiguration('init_z'),
+            '--yaw', LaunchConfiguration('init_yaw'),
+        ],
+        condition=IfCondition(LaunchConfiguration('auto_initial_pose')),
+    )
+
     # ── Nav2 3D Navigation (纯避障+路径规划, 不含 AMCL) ─────────
     nav2_params = PathJoinSubstitution([
         FindPackageShare('dog_brain'), 'config', 'nav2_3d_params.yaml'
@@ -161,6 +203,11 @@ def generate_launch_description():
     return LaunchDescription([
         use_sim_time_arg,
         map_pcd_arg,
+        auto_initial_pose_arg,
+        init_x_arg,
+        init_y_arg,
+        init_z_arg,
+        init_yaw_arg,
         sensors_launch,
         robot_state_pub,
         lcm_bridge,
@@ -171,5 +218,6 @@ def generate_launch_description():
         # step_detector,  # 暂时禁用, CPU 过高
         global_loc,
         transform_fusion,
+        auto_initial_pose_node,
         nav2_bringup,
     ])
