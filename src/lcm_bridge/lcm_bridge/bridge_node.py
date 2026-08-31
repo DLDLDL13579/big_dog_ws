@@ -432,12 +432,13 @@ class LcmRosBridge(Node):
             # 桥接层看门狗: Nav2 停发 → 目标归零 (平滑刹停)
             if age > self.NAV_CMD_TIMEOUT:
                 tv, tw = 0.0, 0.0
-            # ★ 非线性速度映射: Nav2 [0.01, 0.75] → [NAV_V_MIN, 0.75]
-            # 低速段提升过 deadbandRegion(0.075), 高速段不变, 单调递增
+            # ★ 死区处理: 只抬底, 不放大 (旧版 [0.01,0.75]→[0.24,0.75] 拉升使 0.45 实发 0.545 超速)
+            # ≥NAV_V_MIN 恒等透传; (0.01,NAV_V_MIN) 抬到 NAV_V_MIN (恰过 deadbandRegion 0.075/1.5); ≤0.01 归零
             # 作用于目标值(斜坡之前), 保证加速平滑
-            if abs(tv) > 0.001:
-                _s = 1.0 if tv > 0 else -1.0
-                tv = _s * (self.NAV_V_MIN + (abs(tv) - 0.01) * (0.75 - self.NAV_V_MIN) / 0.74)
+            if abs(tv) <= 0.01:
+                tv = 0.0
+            else:
+                tv = math.copysign(max(abs(tv), self.NAV_V_MIN), tv)
             # 加速度斜坡 (防阶跃冲击)
             cv, cw = self._nav_cur
             max_dv = self.NAV_V_ACCEL * period
@@ -446,7 +447,10 @@ class LcmRosBridge(Node):
             cw += max(-max_dw, min(max_dw, tw - cw))
             self._nav_cur = (cv, cw)
             # 映射到 TCP 摇杆等效值 (注意转向符号取反)
-            tcp_v = max(-1.0, min(1.0, cv / self.NAV_V_CHAIN))
+            # UpBoard 导航模式: 前向 v_des=1.5×TCP, 倒向 v_des=TCP/2 (无 v_scale);
+            # 倒向分母改 ÷1.5 (NAV_V_CHAIN/3) 补偿 ÷2 分支, 前后向均恒等 stateDes[6]=cv
+            _v_denom = self.NAV_V_CHAIN if cv >= 0 else self.NAV_V_CHAIN / 3.0
+            tcp_v = max(-1.0, min(1.0, cv / _v_denom))
             tcp_w = max(-1.0, min(1.0, -cw / self.NAV_W_CHAIN))
             flag = 1.0 if (abs(cv) > 0.01 or abs(cw) > 0.01) else 0.0
             data = struct.pack('<3d', float(flag), float(tcp_w), float(tcp_v))
