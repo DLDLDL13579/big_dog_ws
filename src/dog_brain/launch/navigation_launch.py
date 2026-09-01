@@ -29,6 +29,14 @@ from launch_ros.substitutions import FindPackageShare
 
 def generate_launch_description():
     use_sim_time_arg = DeclareLaunchArgument('use_sim_time', default_value='false')
+    # ★ 2026-09-01: 导航模式默认禁用 D435i (实测 CPU 41% 但无人消费:
+    #   camera_scan 已因硬件故障禁用, step_detector 已注释)。
+    #   camera_link TF 由 URDF 静态关节提供, 不依赖相机节点, TF 链不受影响;
+    #   需要时: ros2 launch ... navigation_launch.py enable_camera:=true
+    enable_camera_arg = DeclareLaunchArgument(
+        'enable_camera',
+        default_value='false',
+        description='导航模式是否启动 D435i (默认关闭, 当前无消费方)')
     map_pcd_arg = DeclareLaunchArgument(
         'map_pcd',
         default_value=PathJoinSubstitution([
@@ -63,7 +71,8 @@ def generate_launch_description():
             PathJoinSubstitution([
                 FindPackageShare('dog_sensors'), 'launch', 'all_sensors_launch.py'
             ])
-        )
+        ),
+        launch_arguments={'enable_camera': LaunchConfiguration('enable_camera')}.items()
     )
 
     # ── Robot Description ───────────────────────────────────────
@@ -202,6 +211,7 @@ def generate_launch_description():
 
     return LaunchDescription([
         use_sim_time_arg,
+        enable_camera_arg,
         map_pcd_arg,
         auto_initial_pose_arg,
         init_x_arg,

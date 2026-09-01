@@ -20,10 +20,12 @@ def generate_launch_description():
         default_value='mapping',
         description='运行模式: mapping | navigation')
 
+    # ★ 2026-09-01: 默认 false (camera_scan/step_detector 均已禁用, 实测无消费方;
+    #   dog-brain.service 映射模式早已显式 enable_camera:=false)。需要相机时显式传 true。
     enable_camera_arg = DeclareLaunchArgument(
         'enable_camera',
-        default_value='true',
-        description='是否启动 D435i 相机（建图省电实验可设 false）')
+        default_value='false',
+        description='是否启动 D435i 相机（默认关闭，透传给 mapping/navigation，可显式设 true 开启）')
 
     mapping_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -43,6 +45,7 @@ def generate_launch_description():
                 FindPackageShare('dog_brain'), 'launch', 'navigation_launch.py'
             ])
         ),
+        launch_arguments={'enable_camera': LaunchConfiguration('enable_camera')}.items(),
         condition=IfCondition(
             PythonExpression(['"', LaunchConfiguration('mode'), '" == "navigation"'])
         ),
