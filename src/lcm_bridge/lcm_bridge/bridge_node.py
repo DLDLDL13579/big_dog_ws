@@ -365,6 +365,9 @@ class LcmRosBridge(Node):
     _nav_target_stamp = 0.0    # monotonic 时间戳
     _nav_cur = (0.0, 0.0)      # 斜坡后的当前发送值
     _nav_started = False       # 收到第一条 cmd_vel 才开始发送(建图模式不建 TCP)
+    _nav_prev_raw_v = 0.0      # 上一拍原始 cmd_vel vx (R11 减速锁存判据)
+    _nav_desc_streak = 0       # 连续严格下降拍数
+    _nav_decel_latch = False   # R11 减速直通锁存
 
     # 缩放/限幅常数 (源自 UpBoard 代码链条, 勿随意改动):
     NAV_V_CHAIN = 4.5    # m/s → TCP: 1.5(v_scale) × 3(deadband (x/2)×6)
@@ -432,13 +435,33 @@ class LcmRosBridge(Node):
             # 桥接层看门狗: Nav2 停发 → 目标归零 (平滑刹停)
             if age > self.NAV_CMD_TIMEOUT:
                 tv, tw = 0.0, 0.0
-            # ★ 死区处理: 只抬底, 不放大 (旧版 [0.01,0.75]→[0.24,0.75] 拉升使 0.45 实发 0.545 超速)
-            # ≥NAV_V_MIN 恒等透传; (0.01,NAV_V_MIN) 抬到 NAV_V_MIN (恰过 deadbandRegion 0.075/1.5); ≤0.01 归零
-            # 作用于目标值(斜坡之前), 保证加速平滑
+            # ★ 死区处理: 只抬底, 不放大 (R9; 旧版 [0.01,0.75]→[0.24,0.75] 拉升使 0.45 实发 0.545 超速)
+            # R11 减速直通: 减速坡尾(<NAV_V_MIN)不再抬成 0.24 平台(实测会在目标线前重新加速,
+            # 刹车过冲 0.14~0.62m), 放行原始值由 UpBoard deadband 自然收零。
+            # 锁存: 从 >NAV_V_MIN 连续两次下降更新才锁存(更新间保持不清零); 解锁: |tv|>=NAV_V_MIN+0.04 或归零。
+            # 稳态小指令(含单拍下探后持平)仍抬底, 与 R9 行为一致; 转向/watchdog/TCP/缩放不受影响。
+            raw_tv = tv
             if abs(tv) <= 0.01:
+                self._nav_decel_latch = False
+                self._nav_desc_streak = 0
                 tv = 0.0
             else:
-                tv = math.copysign(max(abs(tv), self.NAV_V_MIN), tv)
+                prev_raw = self._nav_prev_raw_v
+                if abs(tv) < abs(prev_raw):
+                    self._nav_desc_streak += 1
+                elif abs(tv) > abs(prev_raw):
+                    self._nav_desc_streak = 0
+                # 相等=同一条指令被 50Hz 持有多拍: 保留连降计数, 只在上升时清零
+                if self._nav_decel_latch:
+                    if abs(tv) >= self.NAV_V_MIN + 0.04:
+                        self._nav_decel_latch = False
+                    # 锁存中: 原始值直通
+                elif self._nav_desc_streak >= 2 and abs(prev_raw) > self.NAV_V_MIN:
+                    self._nav_decel_latch = True
+                    # 首拍即直通, tv 保持原始值
+                else:
+                    tv = math.copysign(max(abs(tv), self.NAV_V_MIN), tv)
+                self._nav_prev_raw_v = raw_tv
             # 加速度斜坡 (防阶跃冲击)
             cv, cw = self._nav_cur
             max_dv = self.NAV_V_ACCEL * period
