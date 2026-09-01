@@ -184,6 +184,12 @@ class LcmRosBridge(Node):
         self.upboard_ip = self.get_parameter('upboard_ip').value
         self.upboard_port = self.get_parameter('upboard_port').value
         self.publish_odom_tf = self.get_parameter('publish_odom_tf').value
+        # R12 转向抬底 (阶梯④): 默认关闭=行为与 R11 完全一致
+        self.declare_parameter('enable_wz_floor', True)
+        self.declare_parameter('wz_floor', self.NAV_W_FLOOR)
+        self.wz_floor_en = bool(self.get_parameter('enable_wz_floor').value)
+        self.wz_floor = float(self.get_parameter('wz_floor').value)
+        self._wz_floor_last_raw = None
 
         # === ROS2 Publishers ===
         self.odom_pub = self.create_publisher(Odometry, self.topic_odom, 10)
@@ -215,6 +221,7 @@ class LcmRosBridge(Node):
         self.get_logger().info(f'ROS2 topics: {self.topic_odom}, {self.topic_imu}, {self.topic_joints}, {self.topic_cmd_vel}')
         self.get_logger().info(f'Frames: odom={self.frame_odom}, base_link={self.frame_base}')
         self.get_logger().info(f'UpBoard TCP: {self.upboard_ip}:{self.upboard_port}')
+        self.get_logger().info(f'WZ floor: {"ON" if self.wz_floor_en else "OFF"} (floor={self.wz_floor})')
         self.get_logger().info(f'Joint mapping: {LCM_JOINT_NAMES[:4]}... ({len(LCM_JOINT_NAMES)} joints)')
 
     # ── LCM → ROS2 ──────────────────────────────────────────
@@ -377,6 +384,7 @@ class LcmRosBridge(Node):
     NAV_V_ACCEL = 0.5        # 线加速度斜坡限制 m/s^2
     NAV_W_ACCEL = 1.0        # 角加速度斜坡限制 rad/s^2
     NAV_V_MIN = 0.24         # 非线性映射最低速度 m/s (v_des = 0.24/3 = 0.08 > deadbandRegion 0.075)
+    NAV_W_FLOOR = 0.19       # R12 转向抬底 (0.19/2.5 = tcp_w 0.076 > deadband 0.075)
 
     def _tcp_send(self, data: bytes):
         """持久 TCP 发送: 建立连接→发→保持; 断线则关旧建新重发一次"""
@@ -462,6 +470,18 @@ class LcmRosBridge(Node):
                 else:
                     tv = math.copysign(max(abs(tv), self.NAV_V_MIN), tv)
                 self._nav_prev_raw_v = raw_tv
+            # ★ R12 转向抬底 (可开关): UpBoard 转向死区 |tcp_w|<0.075 (⇔ |wz|<0.1875)
+            # 吞掉 DWB 比例控制带 (阶梯④ 实测 58~91% 旋转指令被吞 → yaw 不收敛/极限环)。
+            # 小角速度抬到 ±wz_floor; wz=0 恒为 0 (watchdog 归零不受影响); |wz|>=wz_floor 原样;
+            # 关闭时逐位等价 R11。
+            if self.wz_floor_en and 1e-6 < abs(tw) < self.wz_floor:
+                tw2 = math.copysign(self.wz_floor, tw)
+                if tw != self._wz_floor_last_raw:
+                    self.get_logger().info(f'wz floor: raw {tw:+.4f} -> {tw2:+.4f}')
+                    self._wz_floor_last_raw = tw
+                tw = tw2
+            else:
+                self._wz_floor_last_raw = None
             # 加速度斜坡 (防阶跃冲击)
             cv, cw = self._nav_cur
             max_dv = self.NAV_V_ACCEL * period
