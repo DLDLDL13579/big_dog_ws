@@ -190,6 +190,11 @@ class LcmRosBridge(Node):
         self.wz_floor_en = bool(self.get_parameter('enable_wz_floor').value)
         self.wz_floor = float(self.get_parameter('wz_floor').value)
         self._wz_floor_last_raw = None
+        # R13 锁存驻留解锁: 09-02 实车验证轮默认 ON (同 R12 wz_floor 做法, bringup 无参数管道)
+        self.declare_parameter('enable_latch_dwell', True)
+        self.declare_parameter('latch_dwell_sec', 2.0)
+        self.latch_dwell_en = bool(self.get_parameter('enable_latch_dwell').value)
+        self.latch_dwell_sec = float(self.get_parameter('latch_dwell_sec').value)
 
         # === ROS2 Publishers ===
         self.odom_pub = self.create_publisher(Odometry, self.topic_odom, 10)
@@ -222,6 +227,7 @@ class LcmRosBridge(Node):
         self.get_logger().info(f'Frames: odom={self.frame_odom}, base_link={self.frame_base}')
         self.get_logger().info(f'UpBoard TCP: {self.upboard_ip}:{self.upboard_port}')
         self.get_logger().info(f'WZ floor: {"ON" if self.wz_floor_en else "OFF"} (floor={self.wz_floor})')
+        self.get_logger().info(f'Latch dwell unlock: {"ON" if self.latch_dwell_en else "OFF"} (dwell={self.latch_dwell_sec}s)')
         self.get_logger().info(f'Joint mapping: {LCM_JOINT_NAMES[:4]}... ({len(LCM_JOINT_NAMES)} joints)')
 
     # ── LCM → ROS2 ──────────────────────────────────────────
@@ -375,6 +381,9 @@ class LcmRosBridge(Node):
     _nav_prev_raw_v = 0.0      # 上一拍原始 cmd_vel vx (R11 减速锁存判据)
     _nav_desc_streak = 0       # 连续严格下降拍数
     _nav_decel_latch = False   # R11 减速直通锁存
+    _nav_latch_dwell_raw = None  # R13: 锁存中恒值驻留的比较基准值
+    _nav_latch_dwell_t0 = 0.0    # R13: 恒值驻留起点 (monotonic)
+    _nav_dwell_rearm = False     # R13: 驻留解锁后重武装(下次连降即锁存, 免 prev>NAV_V_MIN)
 
     # 缩放/限幅常数 (源自 UpBoard 代码链条, 勿随意改动):
     NAV_V_CHAIN = 4.5    # m/s → TCP: 1.5(v_scale) × 3(deadband (x/2)×6)
@@ -452,6 +461,8 @@ class LcmRosBridge(Node):
             if abs(tv) <= 0.01:
                 self._nav_decel_latch = False
                 self._nav_desc_streak = 0
+                self._nav_latch_dwell_raw = None
+                self._nav_dwell_rearm = False
                 tv = 0.0
             else:
                 prev_raw = self._nav_prev_raw_v
@@ -463,9 +474,31 @@ class LcmRosBridge(Node):
                 if self._nav_decel_latch:
                     if abs(tv) >= self.NAV_V_MIN + 0.04:
                         self._nav_decel_latch = False
+                        self._nav_dwell_rearm = False
+                        self._nav_latch_dwell_raw = None
+                    elif (self.latch_dwell_en
+                          and self._nav_latch_dwell_raw is not None
+                          and abs(tv - self._nav_latch_dwell_raw) <= 1e-4):
+                        # R13 驻留解锁: 锁存中恒值驻留(同值 ±1e-4)超过 latch_dwell_sec
+                        # = DWB 巡航恒值被锁存直通、UpBoard deadband 吃零、狗已冻结
+                        # (L5-4/6/7 实测 20s 停死) → 自动释放走抬底路径恢复可执行。
+                        # 刹车尾严格递减, 每拍重置基准, 恒不会触发(实测尾长 ≤1.2s)。
+                        if now - self._nav_latch_dwell_t0 >= self.latch_dwell_sec:
+                            self._nav_decel_latch = False
+                            self._nav_desc_streak = 0
+                            self._nav_latch_dwell_raw = None
+                            self._nav_dwell_rearm = True
+                            tv = math.copysign(max(abs(tv), self.NAV_V_MIN), tv)
+                    else:
+                        self._nav_latch_dwell_raw = tv
+                        self._nav_latch_dwell_t0 = now
                     # 锁存中: 原始值直通
-                elif self._nav_desc_streak >= 2 and abs(prev_raw) > self.NAV_V_MIN:
+                elif self._nav_desc_streak >= 2 and (abs(prev_raw) > self.NAV_V_MIN
+                                                     or self._nav_dwell_rearm):
                     self._nav_decel_latch = True
+                    self._nav_dwell_rearm = False
+                    self._nav_latch_dwell_raw = tv
+                    self._nav_latch_dwell_t0 = now
                     # 首拍即直通, tv 保持原始值
                 else:
                     tv = math.copysign(max(abs(tv), self.NAV_V_MIN), tv)
