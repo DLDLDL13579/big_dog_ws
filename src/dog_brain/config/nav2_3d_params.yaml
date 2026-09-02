@@ -148,6 +148,8 @@ controller_server:
       xy_goal_tolerance: 0.40
       yaw_goal_tolerance: 0.3
       transform_tolerance: 0.5
+      trans_stopped_velocity: 0.25
+      slowing_factor: 5.0
       critics:
         - dwb_critics::ObstacleFootprint
         - dwb_critics::GoalAlign
@@ -155,6 +157,7 @@ controller_server:
         - dwb_critics::PathAlign
         - dwb_critics::PathDist
         - dwb_critics::PreferForward
+        - dwb_critics::RotateToGoal
       # ★ Humble 嵌套命名空间写法 (平铺写法不生效, R1 实测验证):
       dwb_critics::ObstacleFootprint:
         scale: 8.0
@@ -169,6 +172,8 @@ controller_server:
         scale: 32.0
       dwb_critics::PreferForward:
         scale: 10.0
+      dwb_critics::RotateToGoal:
+        scale: 24.0
 
 local_costmap:
   local_costmap:
