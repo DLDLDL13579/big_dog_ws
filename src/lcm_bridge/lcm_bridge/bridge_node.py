@@ -195,6 +195,11 @@ class LcmRosBridge(Node):
         self.declare_parameter('latch_dwell_sec', 2.0)
         self.latch_dwell_en = bool(self.get_parameter('enable_latch_dwell').value)
         self.latch_dwell_sec = float(self.get_parameter('latch_dwell_sec').value)
+        # R15 wz 方向锁定: 防 DWB ~1Hz 换向致 90% 旋转量互相抵消 (09-02 分析实锤)
+        self.declare_parameter('enable_wz_dir_lock', True)
+        self.declare_parameter('wz_dir_lock_sec', self.NAV_W_DIR_LOCK_SEC)
+        self.wz_dir_lock_en = bool(self.get_parameter('enable_wz_dir_lock').value)
+        self.wz_dir_lock_sec = float(self.get_parameter('wz_dir_lock_sec').value)
 
         # === ROS2 Publishers ===
         self.odom_pub = self.create_publisher(Odometry, self.topic_odom, 10)
@@ -228,6 +233,7 @@ class LcmRosBridge(Node):
         self.get_logger().info(f'UpBoard TCP: {self.upboard_ip}:{self.upboard_port}')
         self.get_logger().info(f'WZ floor: {"ON" if self.wz_floor_en else "OFF"} (floor={self.wz_floor})')
         self.get_logger().info(f'Latch dwell unlock: {"ON" if self.latch_dwell_en else "OFF"} (dwell={self.latch_dwell_sec}s)')
+        self.get_logger().info(f'WZ dir lock: {"ON" if self.wz_dir_lock_en else "OFF"} (lock_sec={self.wz_dir_lock_sec})')
         self.get_logger().info(f'Joint mapping: {LCM_JOINT_NAMES[:4]}... ({len(LCM_JOINT_NAMES)} joints)')
 
     # ── LCM → ROS2 ──────────────────────────────────────────
@@ -384,6 +390,9 @@ class LcmRosBridge(Node):
     _nav_latch_dwell_raw = None  # R13: 锁存中恒值驻留的比较基准值
     _nav_latch_dwell_t0 = 0.0    # R13: 恒值驻留起点 (monotonic)
     _nav_dwell_rearm = False     # R13: 驻留解锁后重武装(下次连降即锁存, 免 prev>NAV_V_MIN)
+    _wz_dir_lock_dir = 0         # R15: 锁定方向 +1/-1, 0=未锁定
+    _wz_dir_lock_t0 = 0.0        # R15: 锁定开始时间 (monotonic)
+    _wz_dir_opp_t0 = 0.0         # R15: 反方向持续起始时间 (monotonic)
 
     # 缩放/限幅常数 (源自 UpBoard 代码链条, 勿随意改动):
     NAV_V_CHAIN = 4.5    # m/s → TCP: 1.5(v_scale) × 3(deadband (x/2)×6)
@@ -394,6 +403,7 @@ class LcmRosBridge(Node):
     NAV_W_ACCEL = 1.0        # 角加速度斜坡限制 rad/s^2
     NAV_V_MIN = 0.24         # 非线性映射最低速度 m/s (v_des = 0.24/3 = 0.08 > deadbandRegion 0.075)
     NAV_W_FLOOR = 0.19       # R12 转向抬底 (0.19/2.5 = tcp_w 0.076 > deadband 0.075)
+    NAV_W_DIR_LOCK_SEC = 5.0  # R15: wz 方向锁定最小持续秒数 (防 DWB ~1Hz 换向致 90% 旋转抵消)
 
     def _tcp_send(self, data: bytes):
         """持久 TCP 发送: 建立连接→发→保持; 断线则关旧建新重发一次"""
@@ -515,6 +525,31 @@ class LcmRosBridge(Node):
                 tw = tw2
             else:
                 self._wz_floor_last_raw = None
+            # ★ R15 wz 方向锁定: DWB 末端细对准 ~1Hz 交替 ±wz → 狗抬腿惯量大、
+            # 每拍换向导致 90% 旋转量互相抵消 (09-02 七轮实锤: L5-4 成功 flip/s=0.03,
+            # 六轮失败 flip/s=0.87~1.60)。锁定首次非零 wz 方向, 反方向需持续 ≥wz_dir_lock_sec
+            # 才切换; wz=0 解锁。仅作用于非零 wz 段, 看门狗归零不受影响。
+            if self.wz_dir_lock_en and abs(tw) > 1e-6:
+                d = 1 if tw > 0 else -1
+                if self._wz_dir_lock_dir == 0:
+                    self._wz_dir_lock_dir = d
+                    self._wz_dir_lock_t0 = now
+                    self._wz_dir_opp_t0 = 0.0
+                elif d == self._wz_dir_lock_dir:
+                    self._wz_dir_opp_t0 = 0.0
+                else:
+                    if self._wz_dir_opp_t0 == 0.0:
+                        self._wz_dir_opp_t0 = now
+                    if now - self._wz_dir_opp_t0 >= self.wz_dir_lock_sec:
+                        self.get_logger().info(
+                            f'wz dir lock switch: {self._wz_dir_lock_dir:+d} -> {d:+d}')
+                        self._wz_dir_lock_dir = d
+                        self._wz_dir_lock_t0 = now
+                        self._wz_dir_opp_t0 = 0.0
+                tw = math.copysign(abs(tw), self._wz_dir_lock_dir)
+            elif abs(tw) <= 1e-6:
+                self._wz_dir_lock_dir = 0
+                self._wz_dir_opp_t0 = 0.0
             # 加速度斜坡 (防阶跃冲击)
             cv, cw = self._nav_cur
             max_dv = self.NAV_V_ACCEL * period
