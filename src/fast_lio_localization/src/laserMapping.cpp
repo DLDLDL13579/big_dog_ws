@@ -631,7 +631,6 @@ void publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPt
     odomAftMapped.child_frame_id = "base_link";
     odomAftMapped.header.stamp = get_ros_time(lidar_end_time);
     set_posestamp(odomAftMapped.pose);
-    pubOdomAftMapped->publish(odomAftMapped);
     auto P = kf.get_P();
     for (int i = 0; i < 6; i ++)
     {
@@ -643,6 +642,30 @@ void publish_odometry(const rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPt
         odomAftMapped.pose.covariance[i*6 + 4] = P(k, 1);
         odomAftMapped.pose.covariance[i*6 + 5] = P(k, 2);
     }
+    // nav_msgs/Odometry 要求 twist 位于 child_frame_id。state_point.vel 是
+    // odom/world 系速度，因此先旋回 IMU/body 系；本机 livox_frame 与
+    // base_link 的固定关节 rpy=0，轴向一致。
+    const V3D vel_body = state_point.rot.toRotationMatrix().transpose() * state_point.vel;
+    odomAftMapped.twist.twist.linear.x = vel_body(0);
+    odomAftMapped.twist.twist.linear.y = vel_body(1);
+    odomAftMapped.twist.twist.linear.z = vel_body(2);
+
+    // FAST-LIO 状态中没有角速度分量；用当前扫描最后一帧 IMU 陀螺仪读数
+    // 减去滤波器估计的陀螺零偏。没有 IMU 时显式清零，避免复用上一帧值。
+    V3D angular_velocity_body = Zero3d;
+    if (!Measures.imu.empty())
+    {
+        const auto & angular_velocity = Measures.imu.back()->angular_velocity;
+        angular_velocity_body << angular_velocity.x, angular_velocity.y, angular_velocity.z;
+        angular_velocity_body -= state_point.bg;
+    }
+    odomAftMapped.twist.twist.angular.x = angular_velocity_body(0);
+    odomAftMapped.twist.twist.angular.y = angular_velocity_body(1);
+    odomAftMapped.twist.twist.angular.z = angular_velocity_body(2);
+
+    // 先完整填写 covariance 再发布。原顺序会让首帧协方差全零，
+    // 后续每帧携带上一周期的协方差。
+    pubOdomAftMapped->publish(odomAftMapped);
 
     geometry_msgs::msg::TransformStamped trans;
     trans.header.frame_id = "odom";

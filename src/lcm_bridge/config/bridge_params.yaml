@@ -19,6 +19,8 @@ frames:
 # ROS2 topic names
 topics:
   odom: "/odom"
+  # R21: 只供 Nav2 控制器读取 twist；不替代 FAST-LIO /Odometry 和 TF。
+  nav_odom: "/nav_odom"
   imu: "/upboard/state_estimator"
   joint_states: "/joint_states"
   cmd_vel: "/cmd_vel"

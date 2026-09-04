@@ -104,9 +104,19 @@ def generate_launch_description():
         executable='fastlio_mapping',
         name='fastlio_mapping',
         output='screen',
-        parameters=[PathJoinSubstitution([
-            FindPackageShare('fast_lio_localization'), 'config', 'mid360.yaml'
-        ])],
+        parameters=[
+            PathJoinSubstitution([
+                FindPackageShare('fast_lio_localization'), 'config', 'mid360.yaml'
+            ]),
+            {
+                # 导航只需要实时去畸变点云，不应持续累积建图点云。
+                # map_en=true 时 FAST-LIO 每秒向 pcl_wait_pub 追加点并
+                # 重新构造整幅 /Laser_map，长时导航会无界增长内存/CPU。
+                # 仅在导航 launch 覆盖；mapping_launch.py 仍保留存图能力。
+                'publish.map_en': False,
+                'pcd_save.pcd_save_en': False,
+            },
+        ],
         remappings=[
             ('/livox/lidar', '/livox/lidar'),
             ('/livox/imu', '/livox/imu'),

@@ -107,7 +107,10 @@ bt_navigator:
 controller_server:
   ros__parameters:
     use_sim_time: false
-    odom_topic: /Odometry
+    # R21: DWB 需要“当前、二维模型兼容”的速度。FAST-LIO /Odometry 保留给
+    # 位姿/TF/诊断，控制器改读桥接层生成的 /nav_odom，避免 1s+ 旧 twist
+    # 和步态横向速度进入轨迹生成器。
+    odom_topic: /nav_odom
     controller_frequency: 10.0
     min_x_velocity_threshold: 0.001
     min_y_velocity_threshold: 0.001
@@ -118,8 +121,12 @@ controller_server:
     controller_plugins: ["FollowPath"]
 
     progress_checker:
-      plugin: nav2_controller::SimpleProgressChecker
+      # 机械狗允许原地转向。SimpleProgressChecker 只看平移，原地转向超过
+      # movement_time_allowance 会被误判为“无进展”。PoseProgressChecker 同时
+      # 接受角度进展；0.15rad 低于目标容差 0.3rad，且实测转速可稳定跨过。
+      plugin: nav2_controller::PoseProgressChecker
       required_movement_radius: 0.1
+      required_movement_angle: 0.15
       movement_time_allowance: 10.0
 
     general_goal_checker:
@@ -292,6 +299,11 @@ behavior_server:
     local_footprint_topic: /local_costmap/published_footprint
     global_footprint_topic: /global_costmap/published_footprint
     cycle_frequency: 10.0
+    # 恢复 Spin 默认会发到 1.0rad/s，远高于本机 DWB 已验证的 0.35rad/s
+    # 工作范围；保持与控制器角速度/加速度边界一致，避免恢复动作失控或超时。
+    max_rotational_vel: 0.35
+    min_rotational_vel: 0.19
+    rotational_acc_lim: 1.0
     behavior_plugins: ["spin", "backup", "drive_on_heading", "assisted_teleop", "wait"]
     spin:
       plugin: nav2_behaviors/Spin

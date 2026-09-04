@@ -9,5 +9,5 @@ __pycache__/
 rosbag*/
 
 # 轮次手工备份 (git 历史即备份, 勿入库)
-*.r??bak
+*.r??bak*
 *.bak.*
