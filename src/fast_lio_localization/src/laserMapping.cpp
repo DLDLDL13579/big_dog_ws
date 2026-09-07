@@ -385,6 +385,16 @@ bool sync_packages(MeasureGroup &meas)
     if (lidar_buffer.empty() || imu_buffer.empty()) {
         return false;
     }
+    // R22 防积压: 启动期 IMU 初始化会向 lidar_buffer 堆入约14帧,
+    // 而逐帧处理速率恰等于输入 10Hz, 队列永不排空,
+    // 造成 /Odometry 恒定老化约 1.4s(条件性复现, 见运维文档 R22)。
+    // 队列过深时丢弃过期帧, 只保留最新 2 帧(不处于半帧推送状态时执行)。
+    if (!lidar_pushed) {
+        while (lidar_buffer.size() > 2) {
+            lidar_buffer.pop_front();
+            time_buffer.pop_front();
+        }
+    }
 
     /*** push a lidar scan ***/
     if(!lidar_pushed)
