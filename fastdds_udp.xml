@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!-- R22(2026-09-07): 禁用 FastDDS SHM 传输, 强制 UDPv4。
+     背景: SHM 端口锁损坏(open_and_lock_file failed)导致发布静默丢失,
+     fastlio_mapping 进程存活但 DDS 参与者消失, /Odometry 等输出断流,
+     costmap 失明 -> Robot is out of bounds -> 导航栈瘫痪。
+     注意: 禁 SHM 后大点云走 UDP 回环, 默认套接字缓冲(~208KB)会溢出丢包
+     (实测 /Odometry 只到 8%), 故显式把收发缓冲提到 8MB(内核 max 8MB/4MB 兜底)。 -->
+<profiles xmlns="http://www.eprosima.com/XMLSchemas/fastRTPS_Profiles">
+  <transport_descriptors>
+    <transport_descriptor>
+      <transport_id>udp_only_transport</transport_id>
+      <type>UDPv4</type>
+      <sendBufferSize>8388608</sendBufferSize>
+      <receiveBufferSize>8388608</receiveBufferSize>
+    </transport_descriptor>
+  </transport_descriptors>
+  <participant profile_name="udp_only_profile" is_default_profile="true">
+    <rtps>
+      <userTransports>
+        <transport_id>udp_only_transport</transport_id>
+      </userTransports>
+      <useBuiltinTransports>false</useBuiltinTransports>
+    </rtps>
+  </participant>
+</profiles>
