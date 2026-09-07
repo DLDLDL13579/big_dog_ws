@@ -36,6 +36,19 @@
 
 #include "driver_node.h"
 #include "lds_lidar.h"
+// ---- 主机时间戳补丁 (2026-09-04) ----
+// 雷达设备钟自由运行, SDK 给出的 base_time 存在固定偏移且持续漂移(实测约
+// 1.2s + 1700ppm), 使 FAST-LIO 的 lidar/IMU 时间基准不一致。这里在发布时刻
+// 用主机 system_clock 打戳; 设备域的 timebase / base_time / offset_time 保持
+// 不变, 帧内去畸变不受影响。
+#include <chrono>
+static inline uint64_t LddcHostTimeNs() {
+  return static_cast<uint64_t>(
+      std::chrono::duration_cast<std::chrono::nanoseconds>(
+          std::chrono::system_clock::now().time_since_epoch()).count());
+}
+// ---- 补丁结束 ----
+
 
 namespace livox_ros {
 
@@ -313,7 +326,7 @@ void Lddc::InitPointcloud2Msg(const StoragePacket& pkg, PointCloud2& cloud, uint
   #ifdef BUILDING_ROS1
       cloud.header.stamp = ros::Time( timestamp / 1000000000.0);
   #elif defined BUILDING_ROS2
-      cloud.header.stamp = rclcpp::Time(timestamp);
+      cloud.header.stamp = rclcpp::Time(LddcHostTimeNs());
   #endif
 
   std::vector<LivoxPointXyzrtlt> points;
@@ -369,8 +382,21 @@ void Lddc::InitCustomMsg(CustomMsg& livox_msg, const StoragePacket& pkg, uint8_t
 #ifdef BUILDING_ROS1
   livox_msg.header.stamp = ros::Time(timestamp / 1000000000.0);
 #elif defined BUILDING_ROS2
-  livox_msg.header.stamp = rclcpp::Time(timestamp);
+  livox_msg.header.stamp = rclcpp::Time(LddcHostTimeNs());
 #endif
+
+  // 一次性诊断: 打印设备钟(base_time)与主机钟的偏差
+  {
+    static bool g_hoststamp_logged = false;
+    if (!g_hoststamp_logged) {
+      g_hoststamp_logged = true;
+      uint64_t hn = LddcHostTimeNs();
+      printf("[HOSTSTAMP] pkg.base_time=%.6f host_now=%.6f diff=%.6f\n",
+             (double)timestamp / 1e9, (double)hn / 1e9,
+             ((double)hn - (double)timestamp) / 1e9);
+      fflush(stdout);
+    }
+  }
 
   livox_msg.point_num = pkg.points_num;
   if (lds_->lidars_[index].lidar_type == kLivoxLidarType) {
@@ -484,7 +510,7 @@ void Lddc::InitImuMsg(const ImuData& imu_data, ImuMsg& imu_msg, uint64_t& timest
 #ifdef BUILDING_ROS1
   imu_msg.header.stamp = ros::Time(timestamp / 1000000000.0);  // to ros time stamp
 #elif defined BUILDING_ROS2
-  imu_msg.header.stamp = rclcpp::Time(timestamp);  // to ros time stamp
+  imu_msg.header.stamp = rclcpp::Time(LddcHostTimeNs());  // to ros time stamp
 #endif
 
   imu_msg.angular_velocity.x = imu_data.gyro_x;
