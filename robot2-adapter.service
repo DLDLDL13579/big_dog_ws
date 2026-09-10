@@ -1,0 +1,14 @@
+[Unit]
+Description=robot2 multi-car adapter (rename/convert for domain bridge)
+After=default.target
+
+[Service]
+Environment=ROS_DOMAIN_ID=11
+Environment=FASTRTPS_DEFAULT_PROFILES_FILE=/home/nvidia/fastdds_udp.xml
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/bin/bash -c "source /opt/ros/humble/setup.bash && python3 /home/nvidia/robot2_adapter.py"
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=default.target
