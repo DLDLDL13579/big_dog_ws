@@ -21,6 +21,9 @@
 #   已改为嵌套写法 FollowPath.dwb_critics::BaseObstacle.scale (ros2 param get 验证生效)
 # R1 实车结果(2026-08-26): 2.0m 直线目标 6s 平滑完成, 目视确认实走约 2.3m, 无停摆 ✅
 # R2 2026-08-26: 仅膨胀层 (治终点停摆/高代价区过大): inflation_radius 0.45→0.30
+#   ←订正2026-09-11: 上行只是 R2 当时的中间值, 现网实值 inflation_radius=0.55
+#     (局部/全局代价地图两处同值, 见本文件 inflation_radius 两处 0.55);
+#     R2 之后还有调整, 未回填到本文, 以实际参数值为准。
 #   (局部+全局代价地图同步改, cost_scaling_factor 保持 2.5 不动, 单变量隔离归因)
 # R3 2026-08-27: 体素层 z 窗口扩展 (治避障失明)
 #   origin_z -0.2→-2.0, z_resolution 0.1→0.3, z_voxels 16 → 覆盖 -2.0~2.8m
@@ -214,7 +217,7 @@ local_costmap:
         min_obstacle_height: -0.75
         unknown_threshold: 15
         mark_threshold: 2
-        observation_sources: livox_scan  # ★ 2026-08-27: camera_scan 禁用 (D435i 硬件故障)
+        observation_sources: livox_scan  # ★ camera_scan 禁用系主动省 CPU 的选择, 非硬件故障(D435i 硬件可用); ←订正2026-09-11
         combination_method: 1
         livox_scan:
           topic: /cloud_registered_body
