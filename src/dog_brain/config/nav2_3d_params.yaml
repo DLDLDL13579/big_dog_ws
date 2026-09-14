@@ -234,14 +234,14 @@ local_costmap:
       static_layer:
         plugin: nav2_costmap_2d::StaticLayer
         map_subscribe_transient_local: true
-      always_send_full_costmap: true
+      always_send_full_costmap: false  # 2026-09-14: true->false, 全图重发当前无订阅者, 改走 *_updates 增量
 
 global_costmap:
   global_costmap:
     ros__parameters:
       update_frequency: 1.0
       publish_frequency: 0.5
-      always_send_full_costmap: true
+      always_send_full_costmap: false  # 2026-09-14: true->false, 全图重发当前无订阅者, 改走 *_updates 增量
       global_frame: map
       robot_base_frame: base_link
       use_sim_time: false

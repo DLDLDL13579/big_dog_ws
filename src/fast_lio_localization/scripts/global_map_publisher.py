@@ -13,7 +13,14 @@ class MapPublisherNode(Node):
     def __init__(self):
         super().__init__('map_publisher')
         self.declare_parameter('map_file_path', '/home/nvidia/dog_ws/src/dog_brain/maps/lab_3d_map.pcd')
-        self.declare_parameter('interval', 5)
+        # 2026-09-14 性能订正: 5 -> 60 秒
+        #   原 5 秒重发整幅点云地图(约 8MB/次, 约 1.6MB/s 本机 IPC + 序列化开销)。
+        #   未改 QoS 的原因: 本话题发布端为默认 VOLATILE, 而消费者
+        #   global_localization(ICP) 同样以 VOLATILE 订阅, 且 cb_init_map 拿到
+        #   首帧后立即 destroy_subscription —— 若改成 TRANSIENT_LOCAL 后停发,
+        #   必须同步修改 ICP 订阅端, 否则 ICP 永远等不到地图、全局定位失效。
+        #   故此处只降频: 60 秒窗口足以覆盖 ICP 启动, 流量降 92%。
+        self.declare_parameter('interval', 60)
         path = self.get_parameter('map_file_path').value
         interval = self.get_parameter('interval').value
 

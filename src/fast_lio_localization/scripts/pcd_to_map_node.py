@@ -64,7 +64,13 @@ class PcdToMap(Node):
         self.get_logger().info(
             f'Published /map: {w}x{h} res={res} origin=({min_x:.2f},{min_y:.2f}) '
             f'occupied={int((occ == 100).sum())} cells')
-        self.create_timer(2.0, self._repub)
+        # 2026-09-14 性能订正: 2.0 -> 30.0
+        #   原 2 秒重发每次推 1233KB 全图, 实测 576KB/s, 经 robot2_adapter 上行
+        #   占满跨机链路并造成队头阻塞(延迟尖峰 p95 16ms/max 48ms)。
+        #   保留 timer 而非删除: RViz 侧用 msg.header.stamp 查 TF, 需周期刷新。
+        #   两个订阅者(/global_costmap、/robot2_adapter)均为 TRANSIENT_LOCAL,
+        #   latched 首帧由 DDS 自动补发, 不依赖本重发。
+        self.create_timer(30.0, self._repub)
 
     def _repub(self):
         self.msg.header.stamp = self.get_clock().now().to_msg()
