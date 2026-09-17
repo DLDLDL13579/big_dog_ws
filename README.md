@@ -86,7 +86,7 @@ graph TB
     FLIO --> P2M --> NAV2
     FLIO --> ELE --> NAV2
     STEP --> NAV2
-    NAV2 -->|"TCP 小端 &lt;3d"| RL
+    NAV2 -->|"TCP 小端 3×double"| RL
     UPIMU -->|"LCM 组播 239.255.76.67:7667"| NAV2
     RL -->|"关节力矩"| UPIMU
 ```
