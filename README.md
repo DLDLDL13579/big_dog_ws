@@ -50,6 +50,47 @@ D435i 深度相机  →  ICP 3D 全局定位     →  (Navfn + DWB     →  UpBo
 - **地图双流 + 感知**：pcd_to_map（3D→2D /map）+ elevation_map（2.5D 高程）+ step_detector（D435i 台阶检测）。
 - **桥接**：lcm_bridge 负责 LCM（UpBoard→Jetson 里程计/IMU/关节）与 TCP（Jetson→UpBoard 速度，小端 `<3d`）。
 
+### 数据流全景
+
+```mermaid
+graph TB
+    subgraph SENSOR["传感器"]
+        M360["Livox Mid-360<br/>3D 激光"]
+        D435["D435i<br/>深度相机"]
+        UPIMU["UpBoard<br/>关节 / IMU / 里程计"]
+    end
+
+    subgraph BRAIN["Jetson 大脑（ROS2，DOMAIN_ID=11）"]
+        subgraph LOC["定位四件套（替代 AMCL）"]
+            GMP["global_map_publisher"]
+            FLIO["fastlio_mapping<br/>FAST-LIO2"]
+            GLOC["global_localization<br/>ICP 3D"]
+            TFU["transform_fusion<br/>发布 map→odom"]
+        end
+        subgraph PERCEPT["感知与地图"]
+            P2M["pcd_to_map<br/>3D→2D /map"]
+            ELE["elevation_map<br/>2.5D 高程"]
+            STEP["step_detector<br/>台阶检测"]
+        end
+        NAV2["Nav2 3D<br/>Navfn + DWB + Voxel 代价地图"]
+    end
+
+    subgraph LITTLE["UpBoard 小脑"]
+        RL["RL 策略<br/>ONNX 推理"]
+    end
+
+    M360 --> FLIO
+    D435 --> GLOC
+    D435 --> STEP
+    GMP --> FLIO --> GLOC --> TFU
+    FLIO --> P2M --> NAV2
+    FLIO --> ELE --> NAV2
+    STEP --> NAV2
+    NAV2 -->|"TCP 小端 &lt;3d"| RL
+    UPIMU -->|"LCM 组播 239.255.76.67:7667"| NAV2
+    RL -->|"关节力矩"| UPIMU
+```
+
 ## 硬件平台与网络
 
 | 接口 | IP | 用途 |
@@ -121,3 +162,35 @@ bash /home/nvidia/nav_restart.sh               # 设初始位姿 → RViz 发目
 
 > 运维细节、故障处置、当前任务与完成度，见 `运维与状态文档.md`。
 > 动 UpBoard / 狗体前，务必遵守 `运维与状态文档.md` 中的安全红线。
+
+## 归属与许可证
+
+⚠️ **本仓库根目录没有 `LICENSE` 文件**，因此不声明统一的项目许可证。
+各包的授权状态以各自 `package.xml` 中的 `<license>` 字段为准：
+
+| 包 | `package.xml` 中的声明 |
+|---|---|
+| `dog_brain` | `MIT` |
+| `dog_description` | `MIT` |
+| `dog_sensors` | `MIT` |
+| `lcm_bridge` | `MIT` |
+| `livox_ros_driver2` | `MIT` |
+| `fast_lio_localization` | `BSD` |
+
+### 上游第三方包（权利归原作者）
+
+| 包 / 组件 | 来源与归属 |
+|---|---|
+| `livox_ros_driver2` | **Livox（览沃科技）** 官方雷达驱动；本仓库内已合并并加入时间戳补偿补丁 |
+| `fast_lio_localization` | 基于 **FAST-LIO2**（HKU MARS Lab，BSD）与 ICP 全局定位的二次开发 |
+| `fastdds_udp.xml` | Fast DDS 通信配置（eProsima Fast DDS，Apache-2.0） |
+| `robot2_adapter.py` / `robot2-adapter.service` | 多机协同上行适配器（本项目自研） |
+
+> 建议：若要对外声明 MIT，请补充根目录 `LICENSE` 文件，并把各包 `package.xml`
+> 中缺失的许可证字段补全。
+
+### 硬件与安全提示
+
+- 本项目控制的是**真实四足机器人**（16-DOF 轮腿构型），涉及大扭矩执行器与实时控制，
+  调试时请确保场地安全、急停可用。
+- README 中的控制参数基线（如 R18）**仍在实车对照验证中**，请勿当作已稳定结论使用。
