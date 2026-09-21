@@ -3,7 +3,9 @@
 > **16-DOF 轮腿式机械狗（Mini Cheetah 构型）**，Jetson Orin NX 大脑 + UpBoard 小脑。
 > 全链路已打通并实测验证：FAST-LIO2 建图 → ICP 3D 全局定位 → Nav2 3D 导航 → TCP 小端指令 → UpBoard RL 策略驱动运动。
 
-> **2026-09-15 当前基线**：2D 平地导航已于 R25（09-07）封板（9 随机目标 78%、越界 0、`/Odometry` 中位 24ms）；2.5D 阶段① 配置经实机验证通过、导航实车闭环打通，楼梯可通行区方案落地中（R27）。详见《运维与状态文档》轮次总览与《2.5D-3D进阶方案》。
+> **2026-09-21 当前基线**：控制器改为 **RotationShim 包裹 DWB**（解决起步大角度转向）、**UpBoard 死区 0.075→0.03**（二进制补丁）、**转向抬底 0.19→0.31**（0.19 实测为死区谷底）、**横移 vy 通路打通**（TCP 3→4 double）、**初始位姿自动设为机械狗发车点**。实车：用户 RViz 手动发 4 个远距离目标（间距 8.1~13.9m）**4/4 全部到达**，绕路 1.26~2.56 倍，含避障成功。
+>
+> **2026-09-15 基线**：2D 平地导航已于 R25（09-07）封板（9 随机目标 78%、越界 0、`/Odometry` 中位 24ms）；2.5D 阶段① 配置经实机验证通过、导航实车闭环打通，楼梯可通行区方案落地中（R27）。详见《运维与状态文档》轮次总览与《2.5D-3D进阶方案》。
 
 ## 文档结构
 
@@ -20,6 +22,8 @@
 | `upboard补丁留档/` | UpBoard TCP 注入补丁的源码、MD5 与重编/回退步骤 |
 | `源码订正/` | 源码订正留档（`elevation_map_node.py` + 配套分析脚本） |
 | `archive/` | 被取代的整份文档与旧版源码（含过时声明） |
+| `RotationShim改动草案_20260921.md` | 2026-09-21 换控制器的方案草案（含参数精算与依据） |
+| `死区改值方案分析_20260921.md` | 2026-09-21 UpBoard 死区改值分析（含 ABI 不兼容证据与二进制补丁方案） |
 
 > ⚠️ **历史更正与事故记录已并入正文**：08-27~08-28 的 DWB critics 写法、体素层 z 窗口、B1 TF 回退与 z 漂移归因等结论，见《技术架构与调参》对应章节；R24 的 FastDDS 共享内存静默死亡事故见《运维与状态文档》轮次总览。此处不再重复，以免与正文冲突。
 
@@ -42,15 +46,16 @@
 ## 系统架构
 
 ```
-传感器           建图/定位              规划/导航             执行
-Livox Mid-360  →  FAST-LIO2          →  Nav2 3D          →  TCP 小端指令
-D435i 深度相机  →  ICP 3D 全局定位     →  (Navfn + DWB     →  UpBoard 小脑
-                 (四件套替代 AMCL)       + Voxel 代价地图)    RL 策略驱动运动
+传感器           建图/定位              规划/导航                      执行
+Livox Mid-360  →  FAST-LIO2          →  Nav2 3D                  →  TCP 小端指令
+D435i 深度相机  →  ICP 3D 全局定位     →  (Navfn + RotationShim     →  UpBoard 小脑
+                 (四件套替代 AMCL)        包裹 DWB + Voxel 代价地图)   RL 策略驱动运动
+                                         含横移 vy ±0.25 m/s
 ```
 
 - **定位四件套**：global_map_publisher → fastlio_mapping → global_localization → transform_fusion（发布 map→odom，持绝对定位权）。
 - **地图双流 + 感知**：pcd_to_map（3D→2D /map）+ elevation_map（2.5D 高程）+ step_detector（D435i 台阶检测）。
-- **桥接**：lcm_bridge 负责 LCM（UpBoard→Jetson 里程计/IMU/关节）与 TCP（Jetson→UpBoard 速度，小端 `<3d`）。
+- **桥接**：lcm_bridge 负责 LCM（UpBoard→Jetson 里程计/IMU/关节）与 TCP（Jetson→UpBoard 速度，小端 **`<4d`** = `[flag, ω, v, vy]`；2026-09-21 由 `<3d` 扩展增 vy）。
 
 ### 数据流全景
 
@@ -157,6 +162,9 @@ ros2 service call /map_save std_srvs/srv/Trigger   # 产出 ./test.pcd，重命�
 
 # ③ 部署到导航地图
 # 将 PCD 复制到 src/dog_brain/maps/lab_3d_map.pcd，并 ln -sf 到 install（见技术文档建图章节）
+#   ←订正2026-09-20：nav_restart.sh 未传 map_pcd 参数，导航只认这个文件本身，换图必须直接替换它；
+#   当前为 2026-09-18 新图：51973789 字节≈52MB、1624173 点。2D 图随之变为 1380×910 @0.05m，
+#   origin (−12.812, −15.218)，已与主车在用图同坐标系
 
 # ④ 导航
 bash /home/nvidia/nav_restart.sh               # 设初始位姿 → RViz 发目标 → 狗体运动

@@ -88,13 +88,22 @@ class ElevationMapNode(Node):
             f'Ground base z={GZ:.3f} (p{self.ground_pct}), '
             f'z range [{pts[:, 2].min():.2f},{pts[:, 2].max():.2f}], points={len(pts)}')
 
-        # 栅格化: 与 pcd_to_map 占用判据对齐 (occ_lo <= z <= occ_hi 的点才算占用候选)
-        min_x, min_y = float(pts[:, 0].min()), float(pts[:, 1].min())
-        W = int((pts[:, 0].max() - min_x) / res) + 1
-        H = int((pts[:, 1].max() - min_y) / res) + 1
+        # 占用判据过滤: 与 pcd_to_map_node.py L29-30 完全对齐 (硬约束, 见文件头注释)
+        #   ★ FixB 2026-09-20: 原实现先用【全体点】算包围盒、之后才过滤,
+        #     导致 925 个离群鬼影点(占万分之六)把 x 原点从 -12.81 拉到 -46.62,
+        #     /elevation_costmap 变成 2060x975, 与 /map 的 1380x910 冲突,
+        #     global_costmap 每 30s 在两尺寸间来回 Resize => NavFn 规划失败。
+        #     修法: 先过滤再算包围盒, 与 pcd_to_map 顺序一致。
+        obs_all = pts[(pts[:, 2] >= self.occ_lo) & (pts[:, 2] <= self.occ_hi)]
+        # 栅格化
+        min_x, min_y = float(obs_all[:, 0].min()), float(obs_all[:, 1].min())
+        # 取整方式也必须与 pcd_to_map_node.py L34-35 一致(int 截断会少 1 格,
+        # 1379x909 vs 1380x910 仍会触发 StaticLayer resize)
+        W = int(np.ceil((obs_all[:, 0].max() - min_x) / res)) + 1
+        H = int(np.ceil((obs_all[:, 1].max() - min_y) / res)) + 1
 
         occ = np.zeros((H, W), dtype=np.int8)   # 默认平地(可走)
-        obs = pts[(pts[:, 2] >= self.occ_lo) & (pts[:, 2] <= self.occ_hi)]
+        obs = obs_all
         n_cand = int(len(obs))
         if n_cand:
             oix = ((obs[:, 0] - min_x) / res).astype(np.int64)

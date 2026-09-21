@@ -414,7 +414,9 @@ class LcmRosBridge(Node):
     #   TCP_NODELAY 防 Nagle 合并延迟。
     _tcp_sock = None
     _nav_lock = threading.Lock()
-    _nav_target = (0.0, 0.0)   # (v m/s, omega rad/s) 最新 cmd_vel 目标
+    _nav_target = (0.0, 0.0, 0.0)   # (v, omega, vy) 最新 cmd_vel 目标
+    # [LATERAL 2026-09-21] 横移状态: 斜坡后的 vy 与上一拍原始值
+    _nav_cur_y = 0.0
     _nav_target_stamp = 0.0    # monotonic 时间戳
     _nav_cur = (0.0, 0.0)      # 斜坡后的当前发送值
     _nav_started = False       # 收到第一条 cmd_vel 才开始发送(建图模式不建 TCP)
@@ -441,8 +443,44 @@ class LcmRosBridge(Node):
     NAV_ODOM_IMU_TIMEOUT = 0.2
     NAV_ODOM_W_TAU = 0.15
     NAV_ODOM_W_DEADBAND = 0.02
-    NAV_V_MIN = 0.24         # 非线性映射最低速度 m/s (v_des = 0.24/3 = 0.08 > deadbandRegion 0.075)
-    NAV_W_FLOOR = 0.19       # R12 转向抬底 (0.19/2.5 = tcp_w 0.076 > deadband 0.075)
+    NAV_V_MIN = 0.24         # 非线性映射最低速度 m/s
+    # [订正2026-09-21] 曾降到 0.10 试图减少低速放大, 实测 G 点未到达 -> 回滚 0.24。
+    #   注: UpBoard 死区现已为 0.03(二进制补丁), 该值不再是死区约束, 而是
+    #   「RL 策略低速有效门限」的经验值, 不要仅按死区反推。
+    # [NAV-DEADBAND 2026-09-21] 0.24 -> 0.10: UpBoard 死区已由 0.075 改为 0.03
+    #   (二进制立即数补丁, 见 机械狗研发资料/死区改值方案分析_20260921.md)。
+    #   旧值 0.24 会把 DWB 小速度指令抬到满量程 53%(实测 0.1 档实跑 0.23~0.25 m/s);
+    #   新值 0.10 占满量程 22%, 恰好越过死区 0.03 而不过度放大。
+    NAV_W_FLOOR = 0.31       # R12 转向抬底
+    # [LATERAL 2026-09-21] 横移(vy)通路
+    #   增益链: tcp_vy -> v_des[1] -> *(-1) -> stateDes(7)=(x/2)*4=2x -> vy=-d(7)
+    #   故 vy_policy = 2 * tcp_vy  =>  NAV_Y_CHAIN = 2.0
+    #   符号: 两级负号相消, vy_policy = +cy (与 DWB 同号)
+    NAV_Y_CHAIN = 2.0        # m/s -> TCP (无 v_scale, 链条比 vx 短)
+    NAV_Y_MAX = 0.30         # 横移最大速度 m/s (保守起步)
+    NAV_Y_ACCEL = 0.5        # 横移加速度斜坡 m/s^2
+    # ★★ [2026-09-21 实测订正] 0.19 -> 0.31: 0.19 是【死区谷底】而非有效值!
+    #   转移曲线(桥接 wz -> /nav_odom 实测 wz):
+    #     0.02~0.16 -> 0.008~0.017  完全无效
+    #     0.19      -> -0.0370      符号反向(谷底)
+    #     0.22      -> +0.0054      无效
+    #     0.25/0.28 -> +0.065/+0.090 弱
+    #     0.31      -> +0.2003      有效  <== 取此值
+    #     0.34      -> +0.1541      有效
+    #   原地转向有效比: |wz|>=0.30 时 67%; 0.15~0.21 时仅 29.6%
+    #   现象: nav_G_009 狗卡在距目标 0.28m 处 26s 原地转(wz 恒 -0.190),
+    #         转不动 -> Failed to make progress -> 超时。
+    #   ⚠ 若发现转向过猛/过冲, 可试 0.28; 不要回到 0.19(无效)。
+    # ★★ [订正2026-09-21, bag=nav_G_003 分档实证] 0.19 是【RL 转向有效门限】,
+    #   不是随便设的: 桥接指令 vs 实测 yaw rate 分档统计 --
+    #     |wz| in [0.08,0.12): 实测/指令=0.009, 符号一致率 52.7% (等同随机, 无效)
+    #     |wz| in [0.12,0.19): 实测/指令=-0.005, 符号一致率 49.9% (完全无效)
+    #     |wz| in [0.19,0.36): 实测/指令=0.779, 符号一致率 94.9% (有效)
+    #   曾降到 0.08 导致指令落入无效区 -> 狗转不动、终点反复摆动 47s 进不去容差。
+    #   如需再调, 必须先录 bag 验证该门限, 不可只按 UpBoard 死区反推。
+    # [NAV-DEADBAND 2026-09-21] 0.19 -> 0.08: 旧值占 max_vel_theta(0.35) 的 54%,
+    #   实测 47 次抬底把 DWB 的 -0.0026 放大 73 倍 -> 走弧线/来回摆。
+    #   0.08 占满量程 23%, 可做中小幅度转向修正。
     NAV_W_DIR_LOCK_SEC = 0.3  # R17: lock_sec 1.0->0.3 (R16 冻结15.3%代价过大, 降为最小兜底)
     NAV_W_UNLOCK_STRONG = 0.30      # R16: 强修正解锁幅值 rad/s (> wz_floor 0.19, Nav2 强反向信号)
     NAV_W_UNLOCK_STRONG_SEC = 0.3   # R16: 强修正持续时长 s (持续即解锁, 免等满 lock_sec)
@@ -485,8 +523,12 @@ class LcmRosBridge(Node):
         """
         v = msg.linear.x       # m/s (前向为正)
         omega = msg.angular.z  # rad/s (左转为正)
+        # [LATERAL 2026-09-21] 横移: DWB 的 linear.y (左正右负, ROS 惯例)
+        vy = msg.linear.y
+        if abs(vy) > self.NAV_Y_MAX:
+            vy = math.copysign(self.NAV_Y_MAX, vy)
         with self._nav_lock:
-            self._nav_target = (v, omega)
+            self._nav_target = (v, omega, vy)
             self._nav_target_stamp = time.monotonic()
             self._nav_started = True
 
@@ -541,7 +583,7 @@ class LcmRosBridge(Node):
             now = time.monotonic()
             with self._nav_lock:
                 started = self._nav_started
-                tv, tw = self._nav_target
+                tv, tw, ty = self._nav_target
                 age = now - self._nav_target_stamp
             if not started:
                 self._publish_nav_odom(0.0, 0.0, now, 0.05)
@@ -549,7 +591,7 @@ class LcmRosBridge(Node):
                 continue
             # 桥接层看门狗: Nav2 停发 → 目标归零 (平滑刹停)
             if age > self.NAV_CMD_TIMEOUT:
-                tv, tw = 0.0, 0.0
+                tv, tw, ty = 0.0, 0.0, 0.0
             # ★ 死区处理: 只抬底, 不放大 (R9; 旧版 [0.01,0.75]→[0.24,0.75] 拉升使 0.45 实发 0.545 超速)
             # R11 减速直通: 减速坡尾(<NAV_V_MIN)不再抬成 0.24 平台(实测会在目标线前重新加速,
             # 刹车过冲 0.14~0.62m), 放行原始值由 UpBoard deadband 自然收零。
@@ -668,6 +710,10 @@ class LcmRosBridge(Node):
             cv += max(-max_dv, min(max_dv, tv - cv))
             cw += max(-max_dw, min(max_dw, tw - cw))
             self._nav_cur = (cv, cw)
+            # [LATERAL 2026-09-21] 横移斜坡
+            max_dy = self.NAV_Y_ACCEL * period
+            cy = self._nav_cur_y + max(-max_dy, min(max_dy, ty - self._nav_cur_y))
+            self._nav_cur_y = cy
             bridge_cmd = Twist()
             bridge_cmd.linear.x = float(cv)
             bridge_cmd.angular.z = float(cw)
@@ -679,8 +725,11 @@ class LcmRosBridge(Node):
             _v_denom = self.NAV_V_CHAIN if cv >= 0 else self.NAV_V_CHAIN / 3.0
             tcp_v = max(-1.0, min(1.0, cv / _v_denom))
             tcp_w = max(-1.0, min(1.0, -cw / self.NAV_W_CHAIN))
-            flag = 1.0 if (abs(cv) > 0.01 or abs(cw) > 0.01) else 0.0
-            data = struct.pack('<3d', float(flag), float(tcp_w), float(tcp_v))
+            flag = 1.0 if (abs(cv) > 0.01 or abs(cw) > 0.01 or abs(cy) > 0.01) else 0.0
+            # [LATERAL 2026-09-21] TCP 协议 3->4 doubles: 第4个为 vy(横移)
+            #   阶段3: 启用真实 vy 映射 (增益链见 NAV_Y_CHAIN 注释)
+            tcp_vy = max(-1.0, min(1.0, cy / self.NAV_Y_CHAIN))
+            data = struct.pack('<4d', float(flag), float(tcp_w), float(tcp_v), float(tcp_vy))
             self._tcp_send(data)
             # 定频节拍 (落后不追赶, 避免突发)
             next_t += period

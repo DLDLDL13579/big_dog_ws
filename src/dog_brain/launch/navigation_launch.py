@@ -53,16 +53,16 @@ def generate_launch_description():
         'auto_initial_pose', default_value='true',
         description='启动时自动发布 initialpose (true/false)')
     init_x_arg = DeclareLaunchArgument(
-        'init_x', default_value='0.0',
+        'init_x', default_value='0.000',   # [2026-09-21] 机械狗发车点 H
         description='自动初始位姿 x (map 系)')
     init_y_arg = DeclareLaunchArgument(
-        'init_y', default_value='0.0',
+        'init_y', default_value='-0.111',  # [2026-09-21] 机械狗发车点 H (原 0.0)
         description='自动初始位姿 y (map 系)')
     init_z_arg = DeclareLaunchArgument(
         'init_z', default_value='0.0',
         description='自动初始位姿 z (map 系, global_localization 会归零)')
     init_yaw_arg = DeclareLaunchArgument(
-        'init_yaw', default_value='0.0',
+        'init_yaw', default_value='-0.046',  # [2026-09-21] 机械狗发车点 H (原 0.0)
         description='自动初始位姿 yaw (弧度)')
 
     # ── Sensors ─────────────────────────────────────────────────
@@ -142,14 +142,17 @@ def generate_launch_description():
     )
 
     # 2c. PCD -> 2.5D 高程图 (/elevation_costmap, 越障/模态切换依据)
-    # ★ 2026-08-27 暂时禁用: CPU ~57% 过高, 基本避障不需要
-    # elevation_map = Node(
-    #     package='fast_lio_localization',
-    #     executable='elevation_map_node.py',
-    #     name='elevation_map',
-    #     output='screen',
-    #     parameters=[{'pcd_path': LaunchConfiguration('map_pcd')}]
-    # )
+    # ★ 2026-09-14 2.5D 阶段① 启用: 已参数化(81b5806) + QoS TRANSIENT_LOCAL +
+    #   启动只算一次并 latched 发布, 稳态 CPU 近 0 (08-27 记录的 CPU ~57% 是周期重算版本)。
+    #   消费方: global_costmap 的 elevation_layer (见 nav2_3d_params.yaml)。
+    #   step_detector 仍禁用: 需开相机(+56.9% CPU), 且 /step_ahead 当前无消费者。
+    elevation_map = Node(
+        package='fast_lio_localization',
+        executable='elevation_map_node.py',
+        name='elevation_map',
+        output='screen',
+        parameters=[{'pcd_path': LaunchConfiguration('map_pcd')}]
+    )
 
     # 2d. 实时前方台阶检测 (D435i 近距, 供轮腿模态切换) [实验性,待现场标定]
     # ★ 2026-08-27 暂时禁用: CPU 56.9% 过高, 导致控制循环跑不满 10Hz
@@ -234,7 +237,7 @@ def generate_launch_description():
         fast_lio2,
         global_map_pub,
         pcd_to_map,
-        # elevation_map,  # 暂时禁用, CPU 过高
+        elevation_map,  # 2026-09-14 2.5D 阶段① 启用
         # step_detector,  # 暂时禁用, CPU 过高
         global_loc,
         transform_fusion,

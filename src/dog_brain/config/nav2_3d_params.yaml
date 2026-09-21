@@ -139,22 +139,79 @@ controller_server:
       stateful: true
 
     FollowPath:
-      plugin: dwb_core::DWBLocalPlanner
+      # ══════════════════════════════════════════════════════════════════
+      # 2026-09-21 改用 RotationShimController 包裹 DWB
+      #   原因: bag=nav_G_004 实测——路径首段与狗朝向夹角中位 134.4°、
+      #         |差|>90° 占 84.5%, 全程「目标在狗头前方」占比 0%,
+      #         狗只能倒车磨 -> 绕路 5.37 倍(12.99m/2.42m)。
+      #   机制: 新路径与朝向夹角 > angular_dist_threshold 时先【原地转向】
+      #         对齐路径方向, 转入 angular_disengage_threshold 后交还 DWB。
+      #   官方文档明确本控制器适用于「NavFn 等非运动学可行规划器 + 需先原地
+      #   转向」的场景, 与本项目完全吻合。
+      #   注: primary_controller 是 STRING 参数(源码确认), DWB 通过
+      #       configure(parent, "FollowPath", ...) 初始化, 故其参数命名空间
+      #       仍是 FollowPath.*, 下方 DWB 全部参数【无需搬动/改缩进】。
+      # ══════════════════════════════════════════════════════════════════
+      plugin: nav2_rotation_shim_controller::RotationShimController
+
+      # ★ 转向速度必须落在实测有效区 0.31~0.35
+      #   实测转移曲线(桥接指令 wz -> /nav_odom 实测 wz):
+      #     0.02~0.16 -> 0.008~0.017   完全无效
+      #     0.19      -> -0.0370       符号反向(死区谷底!)
+      #     0.22      -> +0.0054       无效
+      #     0.25/0.28 -> +0.065/+0.090 弱
+      #     0.31      -> +0.2003       有效
+      #     0.34      -> +0.1541       有效
+      #   原地转向有效比: |wz|>=0.30 时 67%; 0.15~0.21 时仅 29.6%
+      primary_controller: "dwb_core::DWBLocalPlanner"
+      angular_dist_threshold: 0.785        # 45°: 夹角超此值即原地转
+      angular_disengage_threshold: 0.10    # 5.7°: 转到此范围交还 DWB
+      forward_sampling_distance: 0.5       # 沿路径前视 0.5m 取方向
+      rotate_to_heading_angular_vel: 0.35  # ★ 实测最强档, = max_vel_theta
+      # ★ 2026-09-21 修复闭环死锁: 1.5 -> 4.0
+      #   源码: min/max_feasible = current ± max_angular_accel*dt,
+      #   dt=1/controller_frequency=0.1s。1.5*0.1=0.15 把期望的 0.35
+      #   钳到 0.15(实测无效区), 且实测角速度≈0 时永久死锁。
+      #   4.0*0.1=0.40 > 0.35, 一步即可达到目标转速。
+      max_angular_accel: 4.0
+      simulate_ahead_time: 1.0             # 前向仿真查碰撞
+      rotate_to_goal_heading: false        # 先不开, 减少变量
+      # ★ 2026-09-21 修复闭环死锁: true -> false
+      #   true 时 current=odom 实测角速度; 狗没转则 current≈0,
+      #   feasible 区间锁死在 ±0.15, 指令永远爬不上去。
+      #   false 时 current=上次指令值, 指令可自我累加至 0.35。
+      closed_loop: false
+      # ═══ 以下为原 DWB 参数, 保持原位不动 ═══
       debug_trajectory_details: false
+      # 2026-09-20 回滚: 曾改 -0.15 + PreferForward 32 试图减少倒车, 实测导致
+      #   前进(+0.10)/倒车(-0.15) 打分接近、每周期横跳, vx 反向 34 次 => 原地前后
+      #   振荡走不出去。回到 G 点实测成功时的原值 -0.45。
       min_vel_x: -0.45
       max_vel_x: 0.45
-      min_vel_y: 0.0
-      max_vel_y: 0.0
+      # ══ [LATERAL 2026-09-21] 启用横移(vy) ══
+      #   vy 通路已实测打通: linear.y=0.40 -> tcp_vy=0.20 -> 狗左移 0.37m(符号正确)
+      #   执行门限介于 tcp_vy 0.05~0.20, 故 max_vel_y 取 0.25 (保守, RL 上限为 0.6)
+      min_vel_y: -0.25
+      max_vel_y: 0.25
+      # ★ 2026-09-21 回退 0.70 -> 0.35
+      #   0.70 实测失败: wz 持续 110s 打满 -0.700, 狗做匀速圆周运动(倒车+恒定转向),
+      #   是失控放大器而非转向改善。9-20 只回滚了 min_vel_x/PreferForward, 此项遗漏。
+      #   0.35 是 G 点实测成功(距目标 0.099m)时的原值, 也是 9-07 干净基线的实测上限。
+      #   ←订正2026-09-21: 9-21 bag 分组检验证明方向基准【正确】(指令前进→72%朝前走),
+      #     0.70 那次的「转向更自然」主观反馈不可靠(实测该次 wz 打满)。
       max_vel_theta: 0.35
       min_speed_xy: 0.0
       max_speed_xy: 0.45
+      # [LATERAL 2026-09-21] DWB 采样数: 默认 vy_samples=1 表示【不采样横移】,
+      #   必须显式设为 >1 才会生成含 vy 的轨迹。vx/vtheta 沿用默认。
+      vy_samples: 7
       min_speed_theta: 0.0
       acc_lim_x: 0.5
-      acc_lim_y: 0.0
-      acc_lim_theta: 1.0
+      acc_lim_y: 0.5       # [LATERAL 2026-09-21] 0.0 -> 0.5 (启用横移加速度)
+      acc_lim_theta: 1.0       # 2026-09-21 随 max_vel_theta 0.70->0.35 一并回退原值
       decel_lim_x: -0.5
-      decel_lim_y: 0.0
-      decel_lim_theta: -1.0
+      decel_lim_y: -0.5    # [LATERAL 2026-09-21] 0.0 -> -0.5
+      decel_lim_theta: -1.0    # 2026-09-21 同上, 随 max_vel_theta 回退
       xy_goal_tolerance: 0.40
       yaw_goal_tolerance: 0.3
       transform_tolerance: 0.5
@@ -181,6 +238,7 @@ controller_server:
       dwb_critics::PathDist:
         scale: 32.0
       dwb_critics::PreferForward:
+        # 2026-09-20 回滚 32.0 -> 10.0: 提权后与 min_vel_x=-0.15 组合产生前后振荡。
         scale: 10.0
       dwb_critics::RotateToGoal:
         scale: 24.0
@@ -249,10 +307,42 @@ global_costmap:
       transform_tolerance: 0.5
       footprint: "[[0.45,0.25],[0.45,-0.25],[-0.45,-0.25],[-0.45,0.25]]"
       footprint_padding: 0.05
-      plugins: ["static_layer", "voxel_layer", "inflation_layer"]
+      # ★ FixC 2026-09-20: 临时禁用 elevation_layer, 验证规划是否恢复。
+      #   原因: elevation_map_node 用全局地面基准 GZ=percentile(z,3)=-0.289,
+      #   而真实地面(z众数)为 -0.228, 系统性偏低 0.061m => 96.5% 的格 dz>=0.5
+      #   被判障碍, 其中 7161 格在静态图 /map 里是空的(误标)。误标属 static_layer,
+      #   raytrace 清不掉, 只有狗走过去被 footprint 覆盖才消失 => 空区域被封、
+      #   能过不敢过、G/H 点 cost=99 致 NavFn 规划失败。
+      #   代价: 2.5D 台阶代价暂时失效, 待地面基准与 step_max 重新标定后恢复。
+      # ★ FixD 2026-09-20: global 再去掉 voxel_layer, 只留静态图 + 膨胀。
+      #   依据: local/global 的 voxel_layer 配置完全相同, 但 local(rolling,odom,5Hz)
+      #   狗周围 lethal=0 而 global(整图,map,1Hz)=2 => global 的 voxel 残影清除
+      #   不及时(1Hz), 与用户"必须走到跟前才变白"症状吻合(仅 footprint_clearing 生效)。
+      #   Nav2 标准架构: 全局路径只管静态地图, 实时障碍交由 local_costmap + DWB 避障。
+      #   注意: local_costmap 的 voxel_layer 保持启用, 实时避障能力不受影响。
+      plugins: ["static_layer", "inflation_layer"]
+      # ★ 2026-09-14 2.5D 阶段①: 接入 /elevation_costmap (0=平地 80=可越台阶 100=障碍)
+      #   下面 2 个是【全局】参数, 由两个 StaticLayer 实例共享 —— Nav2 源码
+      #   nav2_costmap_2d/plugins/static_layer.cpp L154-158 用不带层前缀的
+      #   get_parameter 读取, 写成 "elevation_layer.xxx" 前缀是无效的。
+      #   use_maximum=true      叠加取最大: elevation 的 0(平地) 不会抹掉主图的 100(墙);
+      #                         CostmapLayer::updateWithMax 对 master=NO_INFORMATION 有专门
+      #                         处理(old_cost == NO_INFORMATION 时直接写入), 故初始 unknown 安全。
+      #   trinary_costmap=false 让 80 走 value/100*254=203; 默认 true 会把 80 抹成 FREE(0),
+      #                         台阶区变免费空间 => 2.5D 完全失效。
+      use_maximum: true
+      trinary_costmap: false
       static_layer:
         plugin: nav2_costmap_2d::StaticLayer
         map_subscribe_transient_local: true
+      # 高程图专用层: 只参与全局规划代价, 不影响 local_costmap。
+      #   80 -> 203(高代价, 非 LETHAL 254), 故 InflationLayer 不会膨胀它
+      #   (inflation_layer.cpp L237 只膨胀 LETHAL_OBSTACLE)。
+      elevation_layer:
+        plugin: nav2_costmap_2d::StaticLayer
+        map_topic: /elevation_costmap
+        map_subscribe_transient_local: true
+        subscribe_to_updates: false
       inflation_layer:
         plugin: nav2_costmap_2d::InflationLayer
         inflation_radius: 0.55
@@ -335,10 +425,15 @@ velocity_smoother:
     smoothing_frequency: 10.0
     scale_velocities: false
     feedback: "OPEN_LOOP"
-    max_velocity: [0.45, 0.0, 1.5]
-    min_velocity: [-0.45, 0.0, -1.5]
-    max_accel: [0.5, 0.0, 1.0]
-    max_decel: [-0.5, 0.0, -1.0]
+    # ══ [LATERAL 2026-09-21] 三元组格式为 [vx, vy, wz]，第2位是 vy ══
+    #   原来第2位全是 0.0 -> vy 被钳制为 0 -> 横移全部丢失!
+    #   实测: DWB 输出 linear.y 非零占比 13.6% (max 0.250),
+    #         但 /cmd_vel_bridge 的 linear.y 非零占比 0.0%。
+    #   vy 限值 0.25 与 nav2_3d_params.yaml 的 max_vel_y 保持一致。
+    max_velocity: [0.45, 0.25, 1.5]
+    min_velocity: [-0.45, -0.25, -1.5]
+    max_accel: [0.5, 0.5, 1.0]
+    max_decel: [-0.5, -0.5, -1.0]
     odom_topic: "/Odometry"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
