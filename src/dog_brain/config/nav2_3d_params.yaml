@@ -134,8 +134,8 @@ controller_server:
 
     general_goal_checker:
       plugin: nav2_controller::SimpleGoalChecker
-      xy_goal_tolerance: 0.40
-      yaw_goal_tolerance: 0.3
+      xy_goal_tolerance: 0.25   # ←订正2026-09-23 列队精度: 0.40→0.20→0.25 回调一档(0.2 下狗接近目标精调打转不收敛, bag2 实测)
+      yaw_goal_tolerance: 0.20   # ←订正2026-09-23 0.3→0.15→0.20 回调一档(11.5°)
       stateful: true
 
     FollowPath:
@@ -212,8 +212,8 @@ controller_server:
       decel_lim_x: -0.5
       decel_lim_y: -0.5    # [LATERAL 2026-09-21] 0.0 -> -0.5
       decel_lim_theta: -1.0    # 2026-09-21 同上, 随 max_vel_theta 回退
-      xy_goal_tolerance: 0.40
-      yaw_goal_tolerance: 0.3
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.20
       transform_tolerance: 0.5
       trans_stopped_velocity: 0.25
       slowing_factor: 5.0
