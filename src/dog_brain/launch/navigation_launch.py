@@ -187,7 +187,12 @@ def generate_launch_description():
 
     # 5. ★ A5: 自动初始位姿发布 (等待 FAST-LIO 就绪 + 地图加载后自动发 initialpose)
     #    - 等待 /Odometry 首帧 (FAST-LIO 启动标志)
-    #    - 再等 8s 让 global_localization 收到 /global_map
+    #    - 再等 map-grace 让 global_localization 收到 /global_map
+    #      ★ 2026-09-24 订正: 8s → 70s。原 8s 与 global_map_publisher 的
+    #        60s 发布周期不匹配（该周期是 09-14 为降流量从 5s 调的），
+    #        实测 initialpose 比 ICP 收到地图早约 54s，导致 ICP 永不触发。
+    #        ICP 端 cb_init_map 收到首帧即 destroy_subscription，故只需
+    #        保证发布时 ICP 已订阅，无需改 QoS/发布间隔。
     #    - 若 /map_to_odom 已有数据 (用户手动设过), 则跳过
     #    - 持续发布 3s 确保 DDS 握手
     auto_initial_pose_node = Node(
@@ -197,6 +202,9 @@ def generate_launch_description():
         output='screen',
         arguments=[
             '--auto',
+            # ★ 2026-09-24: 显式传 map-grace=70s（> 60s 地图发布周期）
+            #   默认 8s 会导致 initialpose 早于地图到达，ICP 永不触发。
+            '--map-grace', '70.0',
             '--x', LaunchConfiguration('init_x'),
             '--y', LaunchConfiguration('init_y'),
             '--z', LaunchConfiguration('init_z'),
