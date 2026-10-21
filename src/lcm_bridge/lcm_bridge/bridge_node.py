@@ -158,6 +158,52 @@ class LcmRosBridge(Node):
         # ── 加载 yaml 配置 ──────────────────────────────────
         self.config, self.config_path = load_config()
         self.lcm_url = self.config.get('lcm_url', DEFAULT_CONFIG['lcm_url'])
+
+        # [缺陷21修复 20261021] lcm_url 的 ifname 支持环境变量覆盖 + 自动回退
+        #   原实现硬编码 ifname=enP8p1s0（Jetson 板载网卡），换板或改名会导致
+        #   LCM 组播静默失败。此处按优先级处理：
+        #     1) 环境变量 LCM_IFNAME（部署时最灵活）
+        #     2) 配置文件里的 ifname（保持原行为）
+        #     3) 若指定的网卡不存在，自动选第一块 UP 的非 lo 网卡
+        import os as _os
+        _ifname_env = _os.environ.get('LCM_IFNAME', '').strip()
+        if _ifname_env:
+            import re as _re
+            if 'ifname=' in self.lcm_url:
+                self.lcm_url = _re.sub(r'ifname=[^&]*', f'ifname={_ifname_env}', self.lcm_url)
+            else:
+                self.lcm_url += f'&ifname={_ifname_env}'
+            self.get_logger().info(f'[缺陷21] LCM ifname overridden by LCM_IFNAME={_ifname_env}')
+        else:
+            # 校验配置里的 ifname 是否存在
+            import re as _re
+            _m = _re.search(r'ifname=([^&]+)', self.lcm_url)
+            if _m:
+                _cfg_if = _m.group(1)
+                if not _os.path.exists(f'/sys/class/net/{_cfg_if}'):
+                    # 自动回退：找第一块 UP 的非 lo、非 docker 网卡
+                    _cand = []
+                    try:
+                        for _n in _os.listdir('/sys/class/net'):
+                            if _n == 'lo' or _n.startswith(('docker', 'veth', 'br-')):
+                                continue
+                            try:
+                                with open(f'/sys/class/net/{_n}/operstate') as _fh:
+                                    if _fh.read().strip() == 'up':
+                                        _cand.append(_n)
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    if _cand:
+                        _new_if = _cand[0]
+                        self.lcm_url = _re.sub(r'ifname=[^&]*', f'ifname={_new_if}', self.lcm_url)
+                        self.get_logger().warn(
+                            f'[缺陷21] 配置的网卡 {_cfg_if} 不存在，自动回退到 {_new_if}. '
+                            f'建议显式设置 LCM_IFNAME 环境变量。')
+                    else:
+                        self.get_logger().error(
+                            f'[缺陷21] 配置的网卡 {_cfg_if} 不存在且无可用替代网卡，LCM 可能失败!')
         lcm_channels = self.config.get('lcm_channels', DEFAULT_CONFIG['lcm_channels'])
         topics = self.config.get('topics', DEFAULT_CONFIG['topics'])
         frames = self.config.get('frames', DEFAULT_CONFIG['frames'])

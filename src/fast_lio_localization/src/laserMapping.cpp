@@ -715,6 +715,20 @@ void h_share_model(state_ikfom &s, esekfom::dyn_share_datastruct<double> &ekfom_
     total_residual = 0.0; 
 
     /** closest surface search and residual computation **/
+    // [缺陷23修复 20261021] 固定数组越界保护
+    //   res_last[] 与 point_selected_surf[] 在文件头部声明为 [100000]，
+    //   下方循环以 feats_down_size 为上界且无检查。
+    //   当前实测 6688 点/帧（point_filter_num=3）远低于上限，
+    //   但若将来调小 point_filter_num 或 filter_size_surf，可能越界。
+    //   此处截断而非中止，保证定位不中断（截断部分点不影响 EKF 更新）。
+    constexpr int ARRAY_CAP = 100000;
+    if (feats_down_size > ARRAY_CAP) {
+        std::cerr << "[WARN] feats_down_size=" << feats_down_size
+                  << " exceeds array capacity " << ARRAY_CAP
+                  << ", truncating to prevent overflow!" << std::endl;
+        feats_down_size = ARRAY_CAP;
+    }
+
     #ifdef MP_EN
         omp_set_num_threads(MP_PROC_NUM);
         #pragma omp parallel for
