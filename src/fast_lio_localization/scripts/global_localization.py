@@ -250,7 +250,7 @@ class GlobalLocalizationNode(Node):
         def down(p): return p.voxel_down_sample(self.scan_voxel_size * scale)
         reg = o3d.pipelines.registration.registration_icp(
             down(scan), down(submap),
-            max_correspondence_distance=1.0*scale,
+            max_correspondence_distance=0.5*scale,
             init=initial,
             estimation_method=o3d.pipelines.registration.TransformationEstimationPointToPoint(),
             criteria=o3d.pipelines.registration.ICPConvergenceCriteria(max_iteration=20)

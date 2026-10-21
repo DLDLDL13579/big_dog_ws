@@ -172,8 +172,9 @@ def generate_launch_description():
         parameters=[{
             'map_voxel_size': 0.1,
             'scan_voxel_size': 0.1,
-            'freq_localization': 1.0,
+            'freq_localization': 0.5,
             'localization_th': 0.9,
+            'fov_far': 20.0,
         }]
     )
 
@@ -245,7 +246,8 @@ def generate_launch_description():
         fast_lio2,
         global_map_pub,
         pcd_to_map,
-        elevation_map,  # 2026-09-14 2.5D 阶段① 启用
+        # [P0-4 20261021] 停用僵尸节点：elevation_layer 不在 global_costmap plugins，订阅数 0
+        # elevation_map,  # 2026-09-14 2.5D 阶段① 启用
         # step_detector,  # 暂时禁用, CPU 过高
         global_loc,
         transform_fusion,
