@@ -40,6 +40,15 @@ class MapPublisherNode(Node):
         self.pub_map = self.create_publisher(PointCloud2, '/global_map', 1)
         self.create_timer(interval, self.publish_map)
         self.get_logger().info(f'Interval for publishing map: {interval} seconds')
+
+        # [缺陷28修复 20261021] 启动时立即发布一次，避免下游等满一个 interval。
+        #   create_timer 的首次触发是在 interval 秒后（ROS2 语义），
+        #   原实现导致 publish_initial_pose 被迫设 map-grace=70s（>60s 周期）。
+        #   立即发一次后，map-grace 可降到 10~15s，启动快 55 秒以上。
+        if self._cloud_msg is not None:
+            self.publish_map()
+            self.get_logger().info('[缺陷28] 已立即发布首帧地图（启动加速）')
+
         self.get_logger().info('Map Publisher Node Initialized')
 
     def _build_cloud(self, pcd):

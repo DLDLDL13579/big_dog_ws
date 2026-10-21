@@ -570,7 +570,14 @@ class LcmRosBridge(Node):
         msg.header.frame_id = self.frame_odom
         msg.child_frame_id = self.frame_base
         msg.twist.twist.linear.x = nav_vx
-        # 机械狗当前 Nav2 配置是非完整二维模型，明确禁止横移。
+        # [缺陷12 澄清 20261021] /nav_odom 的 vy 恒 0 是【反馈侧设计选择】，
+        #   不是"禁止横移"——横移控制通路是通的：
+        #     · nav2_3d_params.yaml: max_vel_y=0.25, vy_samples=7, acc_lim_y=0.5
+        #     · 本文件: NAV_Y_CHAIN=2.0, NAV_Y_MAX=0.30, NAV_Y_ACCEL=0.5
+        #     · 实测: linear.y=0.40 -> tcp_vy=0.20 -> 狗左移 0.37m（符号正确）
+        #   此处置 0 的原因：不让 RL 步态的横向抖动进入 DWB 的 odom 反馈，
+        #   否则 DWB 会把步态横移误判为实际横移、影响轨迹评估。
+        #   ⚠ 副作用：DWB 规划了含 vy 的轨迹却收不到 vy 反馈，无法验证横移是否真发生。
         msg.twist.twist.linear.y = 0.0
         msg.twist.twist.angular.z = nav_wz
         self.nav_odom_pub.publish(msg)

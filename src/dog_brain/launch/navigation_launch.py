@@ -205,7 +205,7 @@ def generate_launch_description():
             '--auto',
             # ★ 2026-09-24: 显式传 map-grace=70s（> 60s 地图发布周期）
             #   默认 8s 会导致 initialpose 早于地图到达，ICP 永不触发。
-            '--map-grace', '70.0',
+            '--map-grace', '15.0',  # [缺陷28] 70->15：地图已改为启动时立即发布
             '--x', LaunchConfiguration('init_x'),
             '--y', LaunchConfiguration('init_y'),
             '--z', LaunchConfiguration('init_z'),

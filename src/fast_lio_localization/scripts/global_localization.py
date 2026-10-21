@@ -236,6 +236,19 @@ class GlobalLocalizationNode(Node):
                     f'Refine failed (fitness={fitness:.3f} below threshold, '
                     f'连续第 {self._consec_fail}/{self.fail_alert_threshold} 次).')
 
+    # ══════════════════════════════════════════════════════════════
+    # ⚠️ [缺陷30 20261021] 此函数是【死代码】，全文无任何调用点。
+    #
+    # 保留原因：内含 scale=5 粗匹配 + scale=1 精匹配的完整流程，
+    #   若将来需要大范围搜索能力，可复用。
+    #
+    # 停用原因（《技术架构与调参》L1639 记录）：
+    #   「ICP 匹配偏 1m ← scale=5 粗匹配拉到局部最优
+    #     → 改为直接用初值发布定位，后续 refine 微调」
+    #
+    # ⚠️ 若要恢复调用，必须先验证不会重现"偏 1m"故障！
+    # 实际初始化路径：cb_init_pose() 的纯几何计算（不走 ICP）。
+    # ══════════════════════════════════════════════════════════════
     def global_localization(self, pose_est):
         self.get_logger().info('Performing global localization via ICP...')
         scan_copy = copy.deepcopy(self.cur_scan)
