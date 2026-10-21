@@ -241,7 +241,7 @@ controller_server:
         # 2026-09-20 回滚 32.0 -> 10.0: 提权后与 min_vel_x=-0.15 组合产生前后振荡。
         scale: 10.0
       dwb_critics::RotateToGoal:
-        scale: 24.0
+        scale: 12.0
 
 local_costmap:
   local_costmap:
@@ -430,11 +430,11 @@ velocity_smoother:
     #   实测: DWB 输出 linear.y 非零占比 13.6% (max 0.250),
     #         但 /cmd_vel_bridge 的 linear.y 非零占比 0.0%。
     #   vy 限值 0.25 与 nav2_3d_params.yaml 的 max_vel_y 保持一致。
-    max_velocity: [0.45, 0.25, 1.5]
+    max_velocity: [0.30, 0.25, 1.5]
     min_velocity: [-0.45, -0.25, -1.5]
     max_accel: [0.5, 0.5, 1.0]
     max_decel: [-0.5, -0.5, -1.0]
-    odom_topic: "/Odometry"
+    odom_topic: "/nav_odom"
     odom_duration: 0.1
     deadband_velocity: [0.0, 0.0, 0.0]
     velocity_timeout: 1.0

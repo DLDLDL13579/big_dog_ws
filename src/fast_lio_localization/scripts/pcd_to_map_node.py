@@ -14,8 +14,12 @@ class PcdToMap(Node):
         super().__init__('pcd_to_map')
         self.declare_parameter('pcd_path', '/home/nvidia/dog_ws/src/dog_brain/maps/lab_3d_map.pcd')
         self.declare_parameter('resolution', 0.05)
-        self.declare_parameter('z_min', 0.15)   # 去地面
-        self.declare_parameter('z_max', 1.8)    # 去上方
+        self.declare_parameter('z_min', 0.15)   # 去地面（相对 ground_z）
+        self.declare_parameter('z_max', 1.8)    # 去上方（相对 ground_z）
+        # [P2-8 20261021] 地面基准：z 窗口改为相对地面，避免地图整体偏移时切错层
+        #   实测当前地图 z 的 p3 = -0.289，故建议传 ground_z=-0.289
+        #   默认 0.0 = 保持原绝对坐标行为（向后兼容）
+        self.declare_parameter('ground_z', 0.0)
         self.declare_parameter('occ_thresh', 3) # 每格最小点数才判占用
         # --- FixE 2026-09-20: 孤立噪点剔除 ---
         self.declare_parameter('iso_enable', True)   # 是否启用孤立格剔除
@@ -26,6 +30,7 @@ class PcdToMap(Node):
         res   = self.get_parameter('resolution').value
         zmin  = self.get_parameter('z_min').value
         zmax  = self.get_parameter('z_max').value
+        gz    = float(self.get_parameter('ground_z').value)
         occ_th= self.get_parameter('occ_thresh').value
         self.iso_enable = bool(self.get_parameter('iso_enable').value)
         self.iso_kernel = int(self.get_parameter('iso_kernel').value)
@@ -33,7 +38,12 @@ class PcdToMap(Node):
 
         pcd = o3d.io.read_point_cloud(path)
         pts = np.asarray(pcd.points)
-        mask = (pts[:, 2] >= zmin) & (pts[:, 2] <= zmax)
+        # [P2-8] 相对地面基准过滤：z_rel = z - ground_z
+        z_rel = pts[:, 2] - gz
+        mask = (z_rel >= zmin) & (z_rel <= zmax)
+        self.get_logger().info(
+            f'[P2-8] z filter: absolute [{zmin+gz:.3f}, {zmax+gz:.3f}] m '
+            f'(ground_z={gz:.3f}, relative [{zmin:.3f}, {zmax:.3f}])')
         pts = pts[mask]
 
         min_x, min_y = float(pts[:, 0].min()), float(pts[:, 1].min())

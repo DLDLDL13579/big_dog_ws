@@ -41,7 +41,13 @@ class TransformFusionNode(Node):
         # 주기 타이머
         period = 1.0 / self.FREQ_PUB_LOCALIZATION
         self.create_timer(period, self.timer_callback)
-        self.get_logger().info('Transform Fusion Node Initialized')
+        # [P1-6 20261021] 位姿合理性检查：|pos| > pos_limit 视为发散，拒绝发布
+        self.declare_parameter('pos_limit', 1000.0)
+        self.pos_limit = float(self.get_parameter('pos_limit').value)
+        self._reject_count = 0
+        self._last_warn_t = 0.0
+        self.get_logger().info(
+            f'Transform Fusion Node Initialized (pos_limit={self.pos_limit:.0f}m)')
 
     def cb_save_cur_odom(self, msg: Odometry):
         with self.lock:
@@ -88,6 +94,19 @@ class TransformFusionNode(Node):
         T_odom_to_base = self.pose_to_mat(odom)
         T_map_to_base  = T_map_to_odom @ T_odom_to_base
         xyz   = tf_transformations.translation_from_matrix(T_map_to_base)
+
+        # [P1-6 20261021] 位姿合理性检查：发散时拒绝发布，避免下游收到 4 亿米位姿
+        import math as _m
+        _norm = _m.sqrt(float(xyz[0])**2 + float(xyz[1])**2 + float(xyz[2])**2)
+        if not _m.isfinite(_norm) or _norm > self.pos_limit:
+            self._reject_count += 1
+            now_t = self.get_clock().now().nanoseconds * 1e-9
+            if now_t - self._last_warn_t > 2.0:
+                self._last_warn_t = now_t
+                self.get_logger().error(
+                    f'[P1-6] POSE REJECTED: |pos|={_norm:.1f}m > {self.pos_limit:.0f}m '
+                    f'(rejected {self._reject_count} times). 检查 FAST-LIO 是否发散!')
+            return  # 不发布 /localization，让下游知道异常
         quat2 = tf_transformations.quaternion_from_matrix(T_map_to_base)
 
         loc_msg = Odometry()

@@ -45,13 +45,15 @@ except ImportError:
     sys.exit(1)
 
 
-def pcd_to_occupancy_grid(pcd_path, resolution=0.05, z_min=0.15, z_max=1.8, occ_thresh=3):
+def pcd_to_occupancy_grid(pcd_path, resolution=0.05, z_min=0.15, z_max=1.8, occ_thresh=3, ground_z=0.0):
     """将 3D PCD 点云投影为 2D 栅格"""
     pcd = o3d.io.read_point_cloud(pcd_path)
     pts = np.asarray(pcd.points)
 
     # 高度过滤：去除地面和上方点
-    mask = (pts[:, 2] >= z_min) & (pts[:, 2] <= z_max)
+    # [P2-8 20261021] 相对地面基准过滤
+    z_rel = pts[:, 2] - ground_z
+    mask = (z_rel >= z_min) & (z_rel <= z_max)
     pts = pts[mask]
 
     if len(pts) == 0:
@@ -196,6 +198,8 @@ def main():
                         help='Map filename (without extension)')
     parser.add_argument('--resolution', type=float, default=0.05,
                         help='Map resolution (m/cell)')
+    parser.add_argument('--ground-z', type=float, default=0.0,
+                        help='地面基准 z（实测当前地图 p3=-0.289）。默认 0.0=绝对坐标')
     parser.add_argument('--z-min', type=float, default=0.15,
                         help='Min z for filtering (m)')
     parser.add_argument('--z-max', type=float, default=1.8,
@@ -225,7 +229,8 @@ def main():
         print(f"Error: PCD file not found: {args.pcd}")
         sys.exit(1)
 
-    print(f"转换为 2D 栅格: resolution={args.resolution}, z=[{args.z_min}, {args.z_max}]")
+    print(f"转换为 2D 栅格: resolution={args.resolution}, "
+          f"z=[{args.z_min}, {args.z_max}] (相对 ground_z={args.ground_z})")
     map_info = pcd_to_occupancy_grid(
         args.pcd, args.resolution, args.z_min, args.z_max, args.occ_thresh)
 

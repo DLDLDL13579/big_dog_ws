@@ -42,6 +42,13 @@ class GlobalLocalizationNode(Node):
         self.FOV               = self.get_parameter('fov').value
         self.FOV_FAR           = self.get_parameter('fov_far').value
 
+        # [P1-7 20261021] ICP 连续失败检测 + 降级
+        self.declare_parameter('fail_alert_threshold', 5)
+        self.fail_alert_threshold = int(self.get_parameter('fail_alert_threshold').value)
+        self._consec_fail = 0
+        self._total_fail = 0
+        self._total_success = 0
+
         # ─── State Variables ─────────────────────────────────────
         self.global_map    = None
         self.initialized   = False
@@ -184,9 +191,23 @@ class GlobalLocalizationNode(Node):
             odom.header.stamp          = self.get_clock().now().to_msg()
             odom.header.frame_id       = 'map'
             self.pub_map_to_odom.publish(odom)
+            self._consec_fail = 0
+            self._total_success += 1
             self.get_logger().info(f'Refine updated localization (fitness={fitness:.3f}).')
         else:
-            self.get_logger().warn(f'Refine failed (fitness={fitness:.3f} below threshold).')
+            # [P1-7 20261021] 连续失败检测 + 降级告警
+            self._consec_fail += 1
+            self._total_fail += 1
+            if self._consec_fail >= self.fail_alert_threshold:
+                self.get_logger().error(
+                    f'[P1-7] ICP DEGRADED: 连续 {self._consec_fail} 次失败 '
+                    f'(fitness={fitness:.3f} < {self.localization_th}). '
+                    f'累计 成功={self._total_success} 失败={self._total_fail}. '
+                    f'定位可能已失效，请检查狗是否在地图中!')
+            else:
+                self.get_logger().warn(
+                    f'Refine failed (fitness={fitness:.3f} below threshold, '
+                    f'连续第 {self._consec_fail}/{self.fail_alert_threshold} 次).')
 
     def global_localization(self, pose_est):
         self.get_logger().info('Performing global localization via ICP...')
