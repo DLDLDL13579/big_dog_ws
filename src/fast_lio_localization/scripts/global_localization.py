@@ -49,6 +49,13 @@ class GlobalLocalizationNode(Node):
         self._total_fail = 0
         self._total_success = 0
 
+        # [P2-9 20261021] 点云超时保护：点云断流时拒绝 ICP，避免用旧数据算位姿
+        self.declare_parameter('cloud_timeout', 1.0)  # 秒
+        self.cloud_timeout = float(self.get_parameter('cloud_timeout').value)
+        self._cloud_stamp = None   # 最近一帧点云的接收时刻（monotonic）
+        self._cloud_stale_warn_t = 0.0
+        self._cloud_stale_count = 0
+
         # ─── State Variables ─────────────────────────────────────
         self.global_map    = None
         self.initialized   = False
@@ -150,6 +157,9 @@ class GlobalLocalizationNode(Node):
         self.cur_odom = msg
 
     def cb_save_cur_scan(self, msg: PointCloud2):
+        # [P2-9 20261021] 记录点云接收时刻，供新鲜度检查
+        import time as _time
+        self._cloud_stamp = _time.monotonic()
         msg.header.frame_id = 'odom'
         msg.header.stamp    = self.get_clock().now().to_msg()
         self.pub_pc_in_map.publish(msg)
@@ -167,6 +177,23 @@ class GlobalLocalizationNode(Node):
         """精匹配(仅 scale=1, 不做粗匹配), 用于定时器微调定位"""
         if self.cur_scan is None or self.cur_odom is None or self.global_map is None:
             return
+
+        # [P2-9 20261021] 点云超时保护：断流时拒绝 ICP，避免用旧点云算出错误位姿
+        import time as _time
+        if self._cloud_stamp is None:
+            return
+        cloud_age = _time.monotonic() - self._cloud_stamp
+        if cloud_age > self.cloud_timeout:
+            self._cloud_stale_count += 1
+            now_t = _time.monotonic()
+            if now_t - self._cloud_stale_warn_t > 2.0:
+                self._cloud_stale_warn_t = now_t
+                self.get_logger().error(
+                    f'[P2-9] CLOUD STALE: /cloud_registered 已 {cloud_age:.1f}s 无新数据 '
+                    f'(阈值 {self.cloud_timeout:.1f}s, 累计 {self._cloud_stale_count} 次). '
+                    f'拒绝 ICP，检查雷达驱动!')
+            return
+
         self.get_logger().info('Refining localization via ICP...')
         scan_copy = copy.deepcopy(self.cur_scan)
 
